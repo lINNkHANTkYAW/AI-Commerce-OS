@@ -1,0 +1,293 @@
+import express, { Request, Response } from 'express';
+import path from 'path';
+import dotenv from 'dotenv';
+import { GoogleGenAI, Type } from '@google/genai';
+import { createServer as createViteServer } from 'vite';
+import { AI_TOOL_DECLARATIONS, executeAITool } from './src/services/aiTools';
+
+dotenv.config();
+
+const app = express();
+const PORT = 3000;
+
+app.use(express.json());
+
+// Initialize Gemini Client with required header
+const getGeminiClient = () => {
+  const apiKey = process.env.GEMINI_API_KEY || 'demo_key';
+  return new GoogleGenAI({
+    apiKey,
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
+      },
+    },
+  });
+};
+
+// -------------------------------------------------------------------
+// API ROUTES
+// -------------------------------------------------------------------
+
+// Health check
+app.get('/api/health', (req: Request, res: Response) => {
+  res.json({
+    status: 'ok',
+    appName: 'AI Commerce OS (Sale Brain)',
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// 1. AI Sales & Support Agent with Tool Calling
+app.post('/api/ai/agent', async (req: Request, res: Response) => {
+  try {
+    const { messages, customerId, conversationId, channel } = req.body;
+
+    const ai = getGeminiClient();
+
+    const systemInstruction = `You are the Action-Taking AI Sales & Support Agent for "NovaTech Myanmar" (AI Commerce OS).
+Your primary role is to assist ASEAN and Myanmar customers with product inquiries, recommendations, order creation, and support questions.
+
+RULES:
+1. ALWAYS use the provided tools (e.g. search_products, get_product_details, check_inventory, calculate_order_total, create_draft_order, get_customer_profile, search_business_knowledge) to verify products, prices, stock, and policies.
+2. NEVER invent non-existent products, prices, or false stock quantities.
+3. Prices in Myanmar are in Myanmar Kyat (MMK). Laptops range from 850,000 MMK to 2,200,000 MMK.
+4. When a customer expresses interest in a product with a budget, use search_products to find exact matches.
+5. When customer confirms wanting to order, collect Name, Phone, and Address, then call create_draft_order.
+6. Be friendly, polite, clear, professional, and helpful. You can speak English and acknowledge Myanmar/Myanglish phrases politely.`;
+
+    // Format message history
+    const contents = (messages || []).map((m: any) => ({
+      role: m.sender === 'customer' ? 'user' : 'model',
+      parts: [{ text: m.text }],
+    }));
+
+    if (contents.length === 0) {
+      return res.status(400).json({ error: 'No messages provided' });
+    }
+
+    // Call Gemini with tools enabled
+    let response = await ai.models.generateContent({
+      model: 'gemini-3.6-flash',
+      contents,
+      config: {
+        systemInstruction,
+        tools: [{ functionDeclarations: AI_TOOL_DECLARATIONS }],
+      },
+    });
+
+    const executedTools: Array<{ tool: string; args: any; result: any }> = [];
+
+    // Loop for tool execution if Gemini triggers function calls
+    let loopCount = 0;
+    while (response.functionCalls && response.functionCalls.length > 0 && loopCount < 5) {
+      loopCount++;
+      const call = response.functionCalls[0];
+      const toolName = call.name;
+      const toolArgs = call.args;
+
+      console.log(`[AI Tool Execution] Calling tool: ${toolName}`, toolArgs);
+      const toolResult = await executeAITool(toolName, toolArgs);
+      executedTools.push({ tool: toolName, args: toolArgs, result: toolResult });
+
+      // Follow up call with tool result
+      const previousCandidate = response.candidates?.[0]?.content;
+      contents.push(previousCandidate as any);
+      contents.push({
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              name: toolName,
+              response: { result: toolResult },
+            },
+          },
+        ],
+      } as any);
+
+      response = await ai.models.generateContent({
+        model: 'gemini-3.6-flash',
+        contents,
+        config: {
+          systemInstruction,
+          tools: [{ functionDeclarations: AI_TOOL_DECLARATIONS }],
+        },
+      });
+    }
+
+    const replyText = response.text || 'I have checked our systems and updated your request.';
+
+    res.json({
+      text: replyText,
+      executedTools,
+    });
+  } catch (error: any) {
+    console.error('Error in /api/ai/agent:', error);
+    res.status(500).json({
+      error: 'AI Agent error',
+      message: error?.message || 'Failed to process AI conversation.',
+    });
+  }
+});
+
+// 2. AI Campaign Autopilot Generator
+app.post('/api/ai/campaign', async (req: Request, res: Response) => {
+  try {
+    const { prompt, budgetUSD = 100 } = req.body;
+
+    const ai = getGeminiClient();
+
+    const systemInstruction = `You are the AI Campaign Autopilot for NovaTech Myanmar.
+Generate a comprehensive, ready-to-launch marketing campaign based on the business owner's natural language request.
+Your output MUST be a valid JSON object matching the requested schema exactly.
+
+Target Market: Myanmar & ASEAN students and tech buyers.
+Primary Currency: MMK (Myanmar Kyat) with USD equivalent.`;
+
+    const campaignSchema = {
+      type: Type.OBJECT,
+      properties: {
+        title: { type: Type.STRING },
+        objective: { type: Type.STRING },
+        targetAudience: { type: Type.STRING },
+        valueProposition: { type: Type.STRING },
+        offerDetails: { type: Type.STRING },
+        content: {
+          type: Type.OBJECT,
+          properties: {
+            facebookCopy: { type: Type.STRING },
+            instagramCaption: { type: Type.STRING },
+            videoScript: { type: Type.STRING },
+            emailCopy: { type: Type.STRING },
+            smsCopy: { type: Type.STRING },
+          },
+          required: ['facebookCopy', 'instagramCaption', 'videoScript'],
+        },
+        creativeBrief: {
+          type: Type.OBJECT,
+          properties: {
+            visualConcept: { type: Type.STRING },
+            brandColors: { type: Type.ARRAY, items: { type: Type.STRING } },
+            imagePrompt: { type: Type.STRING },
+            typographyGuide: { type: Type.STRING },
+            ctaText: { type: Type.STRING },
+            recommendedDimensions: { type: Type.STRING },
+          },
+          required: ['visualConcept', 'imagePrompt', 'ctaText'],
+        },
+        hashtags: { type: Type.ARRAY, items: { type: Type.STRING } },
+        kpis: {
+          type: Type.OBJECT,
+          properties: {
+            expectedInquiries: { type: Type.NUMBER },
+            expectedOrders: { type: Type.NUMBER },
+            targetRevenueUSD: { type: Type.NUMBER },
+          },
+          required: ['expectedInquiries', 'expectedOrders', 'targetRevenueUSD'],
+        },
+      },
+      required: ['title', 'objective', 'targetAudience', 'valueProposition', 'content', 'creativeBrief', 'hashtags', 'kpis'],
+    };
+
+    const userPrompt = `Create a complete marketing campaign strategy and copy for the following prompt: "${prompt}". Budget allocated: $${budgetUSD}.`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.6-flash',
+      contents: userPrompt,
+      config: {
+        systemInstruction,
+        responseMimeType: 'application/json',
+        responseSchema: campaignSchema,
+      },
+    });
+
+    const jsonText = response.text?.trim() || '{}';
+    const campaignData = JSON.parse(jsonText);
+
+    res.json({
+      success: true,
+      campaign: campaignData,
+    });
+  } catch (error: any) {
+    console.error('Error in /api/ai/campaign:', error);
+    res.status(500).json({
+      error: 'Campaign generation failed',
+      message: error?.message || 'Failed to generate campaign.',
+    });
+  }
+});
+
+// 3. AI Business Copilot Assistant Query
+app.post('/api/ai/copilot', async (req: Request, res: Response) => {
+  try {
+    const { query, storeContext } = req.body;
+
+    const ai = getGeminiClient();
+
+    const systemInstruction = `You are Sale Brain AI Business Copilot for the business owner of NovaTech Myanmar.
+You analyze store metrics, orders, stock levels, and marketing performance to answer business questions clearly with actionable advice.`;
+
+    const contextPrompt = `Business Context:
+- Active Products: ${storeContext?.productsCount || 7}
+- Total Orders: ${storeContext?.ordersCount || 12}
+- Unclosed Leads: ${storeContext?.leadsCount || 3}
+- Currency: MMK / USD
+
+User Query: "${query}"
+
+Provide a direct, insightful response with key numbers, root cause analysis if relevant, and 2 concrete next actions.`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.6-flash',
+      contents: contextPrompt,
+      config: {
+        systemInstruction,
+      },
+    });
+
+    res.json({
+      answer: response.text || 'I have analyzed your business records. Sales and inquiries are performing steadily.',
+    });
+  } catch (error: any) {
+    console.error('Error in /api/ai/copilot:', error);
+    res.status(500).json({ error: 'Copilot query failed' });
+  }
+});
+
+// 4. Telegram Webhook & Channel Simulator
+app.post('/api/telegram/simulate', async (req: Request, res: Response) => {
+  const { messageText, senderName = 'Telegram Customer' } = req.body;
+  res.json({
+    status: 'delivered',
+    channel: 'telegram',
+    externalMessageId: `tg_${Date.now()}`,
+    timestamp: new Date().toISOString(),
+    message: `Simulated message delivered via Telegram Bot Adapter: "${messageText}"`,
+  });
+});
+
+// -------------------------------------------------------------------
+// VITE OR STATIC SERVER SETUP
+// -------------------------------------------------------------------
+
+async function startServer() {
+  if (process.env.NODE_ENV !== 'production') {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: 'spa',
+    });
+    app.use(vite.middlewares);
+  } else {
+    const distPath = path.join(process.cwd(), 'dist');
+    app.use(express.static(distPath));
+    app.get('*', (req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
+  }
+
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`AI Commerce OS (Sale Brain) running at http://0.0.0.0:${PORT}`);
+  });
+}
+
+startServer();

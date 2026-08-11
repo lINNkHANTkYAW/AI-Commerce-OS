@@ -1,0 +1,6 @@
+{
+  "name": "AI Commerce OS",
+  "description": "The Action-Taking AI Operating System for ASEAN Commerce. Closed-loop AI platform connecting customer conversations, orders, products, CRM, marketing campaigns, and AI autopilot.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
