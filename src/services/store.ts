@@ -79,13 +79,15 @@ class StoreService {
 
   private loadState(): AppState {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        return {
-          ...getDefaultState(),
-          ...parsed,
-        };
+      if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+        const saved = localStorage.getItem(STORAGE_KEY);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          return {
+            ...getDefaultState(),
+            ...parsed,
+          };
+        }
       }
     } catch (e) {
       console.error('Failed to parse saved state from localStorage:', e);
@@ -95,7 +97,9 @@ class StoreService {
 
   private saveState() {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.state));
+      if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(this.state));
+      }
     } catch (e) {
       console.error('Failed to save state to localStorage:', e);
     }

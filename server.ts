@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import { GoogleGenAI, Type } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
 import { AI_TOOL_DECLARATIONS, executeAITool } from './src/services/aiTools';
+import { getSupabaseAdmin, getSupabaseClient } from './src/services/supabase';
 
 dotenv.config();
 
@@ -25,23 +26,74 @@ const getGeminiClient = () => {
   });
 };
 
+// Helper: Log AI Action to Supabase
+async function logAIActionToSupabase(toolName: string, args: any, result: any, orgId?: string) {
+  try {
+    const supabase = getSupabaseAdmin();
+    await supabase.from('ai_actions').insert({
+      tool_name: toolName,
+      arguments: args,
+      result: result,
+      executed_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.warn('[Supabase Log Warning] Could not persist AI action to Supabase:', err);
+  }
+}
+
 // -------------------------------------------------------------------
 // API ROUTES
 // -------------------------------------------------------------------
 
-// Health check
-app.get('/api/health', (req: Request, res: Response) => {
+// Health check with Supabase connection check
+app.get('/api/health', async (req: Request, res: Response) => {
+  let supabaseConnected = false;
+  try {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase.from('organizations').select('count').limit(1);
+    if (!error) supabaseConnected = true;
+  } catch (e) {
+    supabaseConnected = false;
+  }
+
   res.json({
     status: 'ok',
     appName: 'AI Commerce OS (Sale Brain)',
+    database: {
+      provider: 'Supabase',
+      url: process.env.SUPABASE_URL || 'https://nkpscafspmndmqyfgwzw.supabase.co',
+      connected: supabaseConnected,
+      rlsEnabled: true,
+      multiTenancy: true,
+    },
     timestamp: new Date().toISOString(),
   });
 });
 
-// 1. AI Sales & Support Agent with Tool Calling
+// Supabase Status & Schema Migration Info
+app.get('/api/supabase/status', async (req: Request, res: Response) => {
+  try {
+    const supabase = getSupabaseAdmin();
+    const { data: orgs, error: orgErr } = await supabase.from('organizations').select('*');
+    res.json({
+      configured: true,
+      url: process.env.SUPABASE_URL || 'https://nkpscafspmndmqyfgwzw.supabase.co',
+      organizationsCount: orgs ? orgs.length : 0,
+      schemaReady: !orgErr,
+      error: orgErr ? orgErr.message : null,
+    });
+  } catch (err: any) {
+    res.json({
+      configured: true,
+      error: err?.message || 'Failed to connect to Supabase',
+    });
+  }
+});
+
+// 1. AI Sales & Support Agent with Tool Calling & Supabase Persistence
 app.post('/api/ai/agent', async (req: Request, res: Response) => {
   try {
-    const { messages, customerId, conversationId, channel } = req.body;
+    const { messages, customerId, conversationId, channel, orgId } = req.body;
 
     const ai = getGeminiClient();
 
@@ -89,6 +141,9 @@ RULES:
       console.log(`[AI Tool Execution] Calling tool: ${toolName}`, toolArgs);
       const toolResult = await executeAITool(toolName, toolArgs);
       executedTools.push({ tool: toolName, args: toolArgs, result: toolResult });
+
+      // Persist AI tool action asynchronously to Supabase
+      logAIActionToSupabase(toolName, toolArgs, toolResult, orgId);
 
       // Follow up call with tool result
       const previousCandidate = response.candidates?.[0]?.content;
