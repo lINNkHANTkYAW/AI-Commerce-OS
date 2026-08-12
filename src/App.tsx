@@ -15,6 +15,7 @@ import { ChannelSimulator } from './components/ChannelSimulator';
 import { AICopilotDrawer } from './components/AICopilotDrawer';
 import { OnboardingWizard } from './components/OnboardingWizard';
 import { CustomerChatWidget } from './components/CustomerChatWidget';
+import { AuthModal } from './components/AuthModal';
 import { useAppStore } from './services/store';
 
 export default function App() {
@@ -22,6 +23,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<NavTab>('overview');
   const [isCopilotOpen, setIsCopilotOpen] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [isAuthOpen, setIsAuthOpen] = useState(true);
 
   if (showOnboarding) {
     return <OnboardingWizard onComplete={() => setShowOnboarding(false)} />;
@@ -36,11 +38,12 @@ export default function App() {
   };
 
   return (
-    <div className="h-screen w-screen bg-[#FAF8F5] text-[#222222] flex flex-col font-sans overflow-hidden selection:bg-[#C5A880]/30 selection:text-[#222222]">
+    <div className="h-screen w-screen bg-[#FAF8F5] text-[#222222] flex flex-col font-sans overflow-hidden selection:bg-[#C5A880]/30 selection:text-[#222222] relative">
       {/* Top Header */}
       <Header
         onOpenCopilot={() => setIsCopilotOpen(true)}
         onNavigateTab={(tab) => handleSelectTab(tab as NavTab)}
+        onOpenAuth={() => setIsAuthOpen(true)}
       />
 
       {/* Main Container with Sticky/Fixed Left Sidebar */}
@@ -55,7 +58,12 @@ export default function App() {
 
         {/* Scrollable Main Workspace */}
         <main className="flex-1 overflow-y-auto min-w-0 p-2 sm:p-4">
-          {(activeTab === 'overview') && <OverviewDashboard onNavigateTab={(tab) => handleSelectTab(tab as NavTab)} />}
+          {(activeTab === 'overview') && (
+            <OverviewDashboard
+              onNavigateTab={(tab) => handleSelectTab(tab as NavTab)}
+              onRunDemoScenario={handleRunDemoScenario}
+            />
+          )}
           {(activeTab === 'inbox') && <UnifiedInbox onNavigateTab={(tab) => handleSelectTab(tab as NavTab)} />}
           {(activeTab === 'crm' || activeTab === 'customers') && <CustomerCRM />}
           {(activeTab === 'products') && <ProductInventory />}
@@ -78,6 +86,9 @@ export default function App() {
 
       {/* Floating Live Customer Chat Widget */}
       <CustomerChatWidget />
+
+      {/* Primary Root Level Auth Modal */}
+      <AuthModal isOpen={isAuthOpen} onClose={() => setIsAuthOpen(false)} />
     </div>
   );
 }

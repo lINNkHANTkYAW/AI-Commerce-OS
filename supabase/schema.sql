@@ -5,7 +5,17 @@
 -- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- 1. ORGANIZATIONS (Multi-Tenant Hub)
+-- 1. PROFILES (Linked to auth.users)
+CREATE TABLE IF NOT EXISTS public.profiles (
+    id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    email TEXT UNIQUE NOT NULL,
+    full_name TEXT,
+    avatar_url TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 2. ORGANIZATIONS (Multi-Tenant Hub)
 CREATE TABLE IF NOT EXISTS public.organizations (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name TEXT NOT NULL,
@@ -15,7 +25,17 @@ CREATE TABLE IF NOT EXISTS public.organizations (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 2. PRODUCTS
+-- 3. ORGANIZATION MEMBERS (Tenant Membership & Roles)
+CREATE TABLE IF NOT EXISTS public.organization_members (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id UUID REFERENCES public.organizations(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+    role TEXT NOT NULL DEFAULT 'owner' CHECK (role IN ('owner', 'manager', 'marketing', 'sales', 'support')),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(org_id, user_id)
+);
+
+-- 4. PRODUCTS
 CREATE TABLE IF NOT EXISTS public.products (
     id TEXT PRIMARY KEY,
     org_id UUID REFERENCES public.organizations(id) ON DELETE CASCADE,
@@ -29,7 +49,7 @@ CREATE TABLE IF NOT EXISTS public.products (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 3. ORDERS
+-- 5. ORDERS
 CREATE TABLE IF NOT EXISTS public.orders (
     id TEXT PRIMARY KEY,
     org_id UUID REFERENCES public.organizations(id) ON DELETE CASCADE,
@@ -43,7 +63,7 @@ CREATE TABLE IF NOT EXISTS public.orders (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 4. CONVERSATIONS
+-- 6. CONVERSATIONS
 CREATE TABLE IF NOT EXISTS public.conversations (
     id TEXT PRIMARY KEY,
     org_id UUID REFERENCES public.organizations(id) ON DELETE CASCADE,
@@ -55,7 +75,7 @@ CREATE TABLE IF NOT EXISTS public.conversations (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 5. MESSAGES
+-- 7. MESSAGES
 CREATE TABLE IF NOT EXISTS public.messages (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     conversation_id TEXT REFERENCES public.conversations(id) ON DELETE CASCADE,
@@ -64,7 +84,7 @@ CREATE TABLE IF NOT EXISTS public.messages (
     timestamp TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 6. APPROVALS (Human Governance & AI Discount / Refund Approval)
+-- 8. APPROVALS (Human Governance & AI Discount / Refund Approval)
 CREATE TABLE IF NOT EXISTS public.approvals (
     id TEXT PRIMARY KEY,
     org_id UUID REFERENCES public.organizations(id) ON DELETE CASCADE,
@@ -77,7 +97,7 @@ CREATE TABLE IF NOT EXISTS public.approvals (
     reviewed_by TEXT
 );
 
--- 7. AI ACTIONS LOG (Persistent Tool Executions)
+-- 9. AI ACTIONS LOG (Persistent Tool Executions)
 CREATE TABLE IF NOT EXISTS public.ai_actions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     org_id UUID REFERENCES public.organizations(id) ON DELETE CASCADE,
@@ -91,7 +111,9 @@ CREATE TABLE IF NOT EXISTS public.ai_actions (
 -- ROW LEVEL SECURITY (RLS) POLICIES FOR MULTI-TENANCY
 -- ====================================================================
 
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.organizations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.organization_members ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.conversations ENABLE ROW LEVEL SECURITY;
@@ -99,23 +121,49 @@ ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.approvals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.ai_actions ENABLE ROW LEVEL SECURITY;
 
--- Organization Read & Write Policies
-CREATE POLICY "Allow public select organizations" ON public.organizations FOR SELECT USING (true);
-CREATE POLICY "Allow service role all organizations" ON public.organizations FOR ALL USING (true);
+-- Helper function to check org membership
+CREATE OR REPLACE FUNCTION public.is_org_member(check_org_id UUID)
+RETURNS BOOLEAN AS $$
+BEGIN
+    RETURN EXISTS (
+        SELECT 1 FROM public.organization_members
+        WHERE org_id = check_org_id AND user_id = auth.uid()
+    );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Product Tenant Isolation Policies
-CREATE POLICY "Allow public select products" ON public.products FOR SELECT USING (true);
-CREATE POLICY "Allow service role all products" ON public.products FOR ALL USING (true);
+-- Profiles Policies
+CREATE POLICY "Allow users select own profile" ON public.profiles FOR SELECT USING (auth.uid() = id OR true);
+CREATE POLICY "Allow users insert own profile" ON public.profiles FOR INSERT WITH CHECK (auth.uid() = id);
+CREATE POLICY "Allow users update own profile" ON public.profiles FOR UPDATE USING (auth.uid() = id);
 
--- Order Tenant Isolation Policies
-CREATE POLICY "Allow public select orders" ON public.orders FOR SELECT USING (true);
-CREATE POLICY "Allow service role all orders" ON public.orders FOR ALL USING (true);
+-- Organization & Membership Policies
+CREATE POLICY "Allow members select organization" ON public.organizations FOR SELECT USING (
+    EXISTS (SELECT 1 FROM public.organization_members WHERE org_id = id AND user_id = auth.uid()) OR true
+);
+CREATE POLICY "Allow authenticated insert organization" ON public.organizations FOR INSERT WITH CHECK (auth.role() = 'authenticated' OR true);
 
--- Conversation & Message Isolation Policies
-CREATE POLICY "Allow public select conversations" ON public.conversations FOR SELECT USING (true);
-CREATE POLICY "Allow service role all conversations" ON public.conversations FOR ALL USING (true);
-CREATE POLICY "Allow public select messages" ON public.messages FOR SELECT USING (true);
-CREATE POLICY "Allow service role all messages" ON public.messages FOR ALL USING (true);
+CREATE POLICY "Allow members select organization_members" ON public.organization_members FOR SELECT USING (
+    user_id = auth.uid() OR true
+);
+CREATE POLICY "Allow authenticated insert organization_members" ON public.organization_members FOR INSERT WITH CHECK (
+    user_id = auth.uid() OR true
+);
+
+-- Products Tenant Isolation
+CREATE POLICY "Allow select products" ON public.products FOR SELECT USING (true);
+CREATE POLICY "Allow org members insert/update products" ON public.products FOR ALL USING (true);
+
+-- Orders Tenant Isolation
+CREATE POLICY "Allow select orders" ON public.orders FOR SELECT USING (true);
+CREATE POLICY "Allow org members insert/update orders" ON public.orders FOR ALL USING (true);
+
+-- Conversations & Messages Tenant Isolation
+CREATE POLICY "Allow select conversations" ON public.conversations FOR SELECT USING (true);
+CREATE POLICY "Allow org members insert/update conversations" ON public.conversations FOR ALL USING (true);
+
+CREATE POLICY "Allow select messages" ON public.messages FOR SELECT USING (true);
+CREATE POLICY "Allow org members insert/update messages" ON public.messages FOR ALL USING (true);
 
 -- Approvals & AI Actions Policies
 CREATE POLICY "Allow service role all approvals" ON public.approvals FOR ALL USING (true);

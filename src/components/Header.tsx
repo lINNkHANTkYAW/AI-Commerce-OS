@@ -8,17 +8,20 @@ import {
   Building,
   UserCheck,
   RefreshCw,
-  SlidersHorizontal
+  SlidersHorizontal,
+  User
 } from 'lucide-react';
 import { useAppStore } from '../services/store';
 import { OrganizationRole } from '../types';
+import { AuthModal } from './AuthModal';
 
 interface HeaderProps {
   onOpenCopilot: () => void;
   onNavigateTab: (tab: any) => void;
+  onOpenAuth: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ onOpenCopilot, onNavigateTab }) => {
+export const Header: React.FC<HeaderProps> = ({ onOpenCopilot, onNavigateTab, onOpenAuth }) => {
   const { state, setRole, resetDemoData } = useAppStore();
   const [showRoleDropdown, setShowRoleDropdown] = useState(false);
 
@@ -43,6 +46,15 @@ export const Header: React.FC<HeaderProps> = ({ onOpenCopilot, onNavigateTab }) 
 
       {/* Right Action Bar */}
       <div className="flex items-center gap-3">
+        {/* Supabase Tenant Auth Pill */}
+        <button
+          onClick={onOpenAuth}
+          className="flex items-center gap-1.5 neu-button text-[#222222] px-3 py-2 rounded-xl text-xs font-semibold transition hover:border-[#C5A880]"
+        >
+          <User className="w-3.5 h-3.5 text-[#C5A880]" />
+          <span className="hidden sm:inline">Store: <strong className="text-[#A98C63]">{state.currentOrg?.name || 'Default Store'}</strong></span>
+        </button>
+
         {/* Supabase Status Pill */}
         <div className="hidden md:flex items-center gap-1.5 neu-button text-emerald-700 px-3 py-2 rounded-xl text-xs font-semibold">
           <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
@@ -123,3 +135,4 @@ export const Header: React.FC<HeaderProps> = ({ onOpenCopilot, onNavigateTab }) 
     </header>
   );
 };
+

@@ -254,26 +254,145 @@ export async function fetchAIActionsFromSupabase(limit = 20): Promise<any[]> {
 }
 
 /**
- * 3. SUPABASE AUTH & IDENTITY HELPERS
+ * 3. SUPABASE AUTH & TENANT IDENTITY HELPERS
  */
 
-export async function signUpWithEmail(email: string, pass: string) {
-  const supabase = getSupabaseClient();
-  return await supabase.auth.signUp({ email, password: pass });
+export async function signUpWithEmail(email: string, pass: string, fullName?: string) {
+  try {
+    const supabase = getSupabaseClient();
+    const res = await supabase.auth.signUp({
+      email,
+      password: pass,
+      options: {
+        data: {
+          full_name: fullName || '',
+        },
+      },
+    });
+
+    if (res.data?.user) {
+      try {
+        const admin = getSupabaseAdmin();
+        await admin.from('profiles').upsert({
+          id: res.data.user.id,
+          email: res.data.user.email,
+          full_name: fullName || '',
+          updated_at: new Date().toISOString(),
+        });
+      } catch (e) {
+        console.warn('[Profile Upsert Notice]:', e);
+      }
+    }
+
+    return res;
+  } catch (err: any) {
+    console.warn('[signUpWithEmail Exception]:', err);
+    return { data: { user: null, session: null }, error: { message: err.message || 'Account creation error' } };
+  }
 }
 
 export async function signInWithEmail(email: string, pass: string) {
-  const supabase = getSupabaseClient();
-  return await supabase.auth.signInWithPassword({ email, password: pass });
+  try {
+    const supabase = getSupabaseClient();
+    const res = await supabase.auth.signInWithPassword({ email, password: pass });
+    return res;
+  } catch (err: any) {
+    console.warn('[signInWithEmail Exception]:', err);
+    return { data: { user: null, session: null }, error: { message: err.message || 'Sign in failed' } };
+  }
 }
 
 export async function signOutUser() {
-  const supabase = getSupabaseClient();
-  return await supabase.auth.signOut();
+  try {
+    const supabase = getSupabaseClient();
+    return await supabase.auth.signOut();
+  } catch (e) {
+    return { error: null };
+  }
 }
 
 export async function getCurrentUser(): Promise<User | null> {
-  const supabase = getSupabaseClient();
-  const { data } = await supabase.auth.getUser();
-  return data?.user || null;
+  try {
+    const supabase = getSupabaseClient();
+    const { data } = await supabase.auth.getUser();
+    return data?.user || null;
+  } catch (e) {
+    return null;
+  }
 }
+
+export async function getUserOrganizations(userId: string): Promise<Organization[]> {
+  try {
+    const admin = getSupabaseAdmin();
+    const { data: members, error: memErr } = await admin
+      .from('organization_members')
+      .select('org_id, role, organizations(*)')
+      .eq('user_id', userId);
+
+    if (memErr || !members) return [];
+
+    return members
+      .filter((m: any) => m.organizations)
+      .map((m: any) => ({
+        id: m.organizations.id,
+        name: m.organizations.name,
+        industry: 'Retail & Electronics',
+        country: m.organizations.country || 'Myanmar',
+        currency: m.organizations.currency || 'MMK',
+        timeZone: 'Asia/Yangon',
+        description: 'Multi-channel AI store',
+        toneOfVoice: m.organizations.tone_of_voice || 'Friendly',
+        createdAt: m.organizations.created_at || new Date().toISOString(),
+      }));
+  } catch (e) {
+    console.warn('[Supabase getUserOrganizations Exception]:', e);
+    return [];
+  }
+}
+
+export async function createOrganizationForUser(
+  userId: string,
+  org: { name: string; country?: string; currency?: string; toneOfVoice?: string }
+): Promise<Organization | null> {
+  try {
+    const admin = getSupabaseAdmin();
+    const { data: createdOrg, error: orgErr } = await admin
+      .from('organizations')
+      .insert({
+        name: org.name,
+        country: org.country || 'Myanmar',
+        currency: org.currency || 'MMK',
+        tone_of_voice: org.toneOfVoice || 'Friendly, professional',
+      })
+      .select()
+      .single();
+
+    if (orgErr || !createdOrg) {
+      console.warn('[createOrganizationForUser Error]:', orgErr?.message);
+      return null;
+    }
+
+    // Add membership
+    await admin.from('organization_members').insert({
+      org_id: createdOrg.id,
+      user_id: userId,
+      role: 'owner',
+    });
+
+    return {
+      id: createdOrg.id,
+      name: createdOrg.name,
+      industry: 'Retail & Electronics',
+      country: createdOrg.country || 'Myanmar',
+      currency: createdOrg.currency || 'MMK',
+      timeZone: 'Asia/Yangon',
+      description: 'Multi-channel AI store',
+      toneOfVoice: createdOrg.tone_of_voice || 'Friendly',
+      createdAt: createdOrg.created_at || new Date().toISOString(),
+    };
+  } catch (e) {
+    console.warn('[createOrganizationForUser Exception]:', e);
+    return null;
+  }
+}
+
