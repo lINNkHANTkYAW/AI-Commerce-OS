@@ -4,7 +4,7 @@ import dotenv from 'dotenv';
 import { GoogleGenAI, Type } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
 import { AI_TOOL_DECLARATIONS, executeAITool } from './src/services/aiTools';
-import { getSupabaseAdmin, getSupabaseClient } from './src/services/supabase';
+import { getSupabaseAdmin, getSupabaseClient, syncConversationToSupabase, syncMessageToSupabase } from './src/services/supabase';
 
 dotenv.config();
 
@@ -309,17 +309,154 @@ Provide a direct, insightful response with key numbers, root cause analysis if r
   }
 });
 
-// 4. Telegram Webhook & Channel Simulator
-app.post('/api/telegram/simulate', async (req: Request, res: Response) => {
-  const { messageText, senderName = 'Telegram Customer' } = req.body;
-  res.json({
-    status: 'delivered',
-    channel: 'telegram',
-    externalMessageId: `tg_${Date.now()}`,
-    timestamp: new Date().toISOString(),
-    message: `Simulated message delivered via Telegram Bot Adapter: "${messageText}"`,
-  });
+// 4. Multi-Channel Webhook Handlers (Telegram, Messenger, Viber, Web)
+async function processChannelWebhook(req: Request, res: Response, channelName: string) {
+  try {
+    const {
+      messageText,
+      customerId = 'cust_anon',
+      customerName = 'Customer',
+      conversationId = `conv_${channelName}_${Date.now()}`,
+      orgId
+    } = req.body;
+
+    if (!messageText) {
+      return res.status(400).json({ error: 'messageText is required' });
+    }
+
+    // 1. Sync Conversation & Incoming Customer Message to Supabase
+    await syncConversationToSupabase({
+      id: conversationId,
+      orgId,
+      channel: channelName,
+      customerId,
+      customerName,
+      status: 'active',
+      lastMessage: messageText,
+    });
+
+    await syncMessageToSupabase({
+      conversationId,
+      sender: 'customer',
+      text: messageText,
+    });
+
+    // 2. Invoke Gemini Sales & Support AI Agent
+    const ai = getGeminiClient();
+    const systemInstruction = `You are the Action-Taking AI Sales & Support Agent for NovaTech Myanmar.
+You are processing an incoming message from channel: ${channelName.toUpperCase()} for customer "${customerName}".
+Your goal is to answer inquiries, search products, calculate order totals, and create draft orders using available tools.`;
+
+    const contents = [
+      {
+        role: 'user',
+        parts: [{ text: messageText }],
+      },
+    ];
+
+    let response = await ai.models.generateContent({
+      model: 'gemini-3.6-flash',
+      contents,
+      config: {
+        systemInstruction,
+        tools: [{ functionDeclarations: AI_TOOL_DECLARATIONS }],
+      },
+    });
+
+    const executedTools: Array<{ tool: string; args: any; result: any }> = [];
+
+    // Process tool execution loop
+    let loopCount = 0;
+    while (response.functionCalls && response.functionCalls.length > 0 && loopCount < 5) {
+      loopCount++;
+      const call = response.functionCalls[0];
+      const toolName = call.name;
+      const toolArgs = call.args;
+
+      console.log(`[Webhook AI Tool] Channel ${channelName} execute: ${toolName}`, toolArgs);
+      const toolResult = await executeAITool(toolName, toolArgs);
+      executedTools.push({ tool: toolName, args: toolArgs, result: toolResult });
+
+      // Persist AI tool action asynchronously to Supabase
+      logAIActionToSupabase(toolName, toolArgs, toolResult, orgId);
+
+      const previousCandidate = response.candidates?.[0]?.content;
+      contents.push(previousCandidate as any);
+      contents.push({
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              name: toolName,
+              response: { result: toolResult },
+            },
+          },
+        ],
+      } as any);
+
+      response = await ai.models.generateContent({
+        model: 'gemini-3.6-flash',
+        contents,
+        config: {
+          systemInstruction,
+          tools: [{ functionDeclarations: AI_TOOL_DECLARATIONS }],
+        },
+      });
+    }
+
+    const aiReplyText = response.text || 'Thank you for reaching out to NovaTech Myanmar! How else can I assist you today?';
+
+    // 3. Sync AI Reply Message to Supabase
+    await syncMessageToSupabase({
+      conversationId,
+      sender: 'ai',
+      text: aiReplyText,
+    });
+
+    // Update conversation lastMessage
+    await syncConversationToSupabase({
+      id: conversationId,
+      orgId,
+      channel: channelName,
+      customerId,
+      customerName,
+      status: 'active',
+      lastMessage: aiReplyText,
+    });
+
+    res.json({
+      status: 'processed',
+      channel: channelName,
+      conversationId,
+      customerName,
+      incomingMessage: messageText,
+      aiReply: aiReplyText,
+      executedTools,
+      persistedToSupabase: true,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error: any) {
+    console.error(`Error in channel webhook (${channelName}):`, error);
+    res.status(500).json({
+      error: 'Webhook processing error',
+      message: error?.message || 'Failed to process channel message',
+    });
+  }
+}
+
+// Unified & Channel-Specific Webhook Routes
+app.post('/api/webhooks/channel', (req: Request, res: Response) => {
+  const channel = req.body.channel || 'telegram';
+  processChannelWebhook(req, res, channel);
 });
+
+app.post('/api/webhooks/telegram', (req: Request, res: Response) => processChannelWebhook(req, res, 'telegram'));
+app.post('/api/webhooks/messenger', (req: Request, res: Response) => processChannelWebhook(req, res, 'messenger'));
+app.post('/api/webhooks/viber', (req: Request, res: Response) => processChannelWebhook(req, res, 'viber'));
+app.post('/api/webhooks/web', (req: Request, res: Response) => processChannelWebhook(req, res, 'web'));
+
+// Legacy simulation backward compatibility
+app.post('/api/telegram/simulate', (req: Request, res: Response) => processChannelWebhook(req, res, 'telegram'));
 
 // -------------------------------------------------------------------
 // VITE OR STATIC SERVER SETUP

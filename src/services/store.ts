@@ -33,6 +33,12 @@ import {
   INITIAL_AUDIT_LOGS
 } from '../data/seedData';
 
+import {
+  syncProductToSupabase,
+  syncOrderToSupabase,
+  syncApprovalToSupabase
+} from './supabase';
+
 const STORAGE_KEY = 'ai_commerce_os_state_v1';
 
 export interface AppState {
@@ -164,11 +170,19 @@ class StoreService {
     this.state.products.push(newProduct);
     this.logAction('User', 'addProduct', `Added product: ${newProduct.name} (SKU: ${newProduct.sku})`);
     this.saveState();
+    syncProductToSupabase(newProduct);
     return newProduct;
   }
 
   public updateProduct(id: string, updates: Partial<Product>) {
-    this.state.products = this.state.products.map((p) => (p.id === id ? { ...p, ...updates } : p));
+    this.state.products = this.state.products.map((p) => {
+      if (p.id === id) {
+        const updated = { ...p, ...updates };
+        syncProductToSupabase(updated);
+        return updated;
+      }
+      return p;
+    });
     this.logAction('User', 'updateProduct', `Updated product ${id}`);
     this.saveState();
   }
@@ -179,6 +193,7 @@ class StoreService {
       product.stockQuantity = Math.max(0, product.stockQuantity + delta);
       this.logAction('User', 'adjustInventory', `Adjusted inventory for ${product.name} by ${delta} (${reason})`);
       this.saveState();
+      syncProductToSupabase(product);
     }
   }
 
@@ -242,11 +257,13 @@ class StoreService {
       const prod = this.state.products.find((p) => p.id === item.productId);
       if (prod) {
         prod.reservedQuantity += item.quantity;
+        syncProductToSupabase(prod);
       }
     });
 
     this.logAction('AI Sales Agent', 'createDraftOrder', `Created draft order ${newOrder.id} for ${newOrder.customerName}`);
     this.saveState();
+    syncOrderToSupabase(newOrder);
     return newOrder;
   }
 
@@ -264,6 +281,7 @@ class StoreService {
         if (prod) {
           prod.reservedQuantity = Math.max(0, prod.reservedQuantity - item.quantity);
           prod.stockQuantity = Math.max(0, prod.stockQuantity - item.quantity);
+          syncProductToSupabase(prod);
         }
       });
 
@@ -282,6 +300,7 @@ class StoreService {
           const prod = this.state.products.find((p) => p.id === item.productId);
           if (prod) {
             prod.reservedQuantity = Math.max(0, prod.reservedQuantity - item.quantity);
+            syncProductToSupabase(prod);
           }
         });
       }
@@ -289,6 +308,7 @@ class StoreService {
 
     this.logAction('User', 'updateOrderStatus', `Changed Order ${order.id} status from ${oldStatus} to ${newStatus}`);
     this.saveState();
+    syncOrderToSupabase(order);
   }
 
   // --- Campaigns & Posts ---
@@ -366,6 +386,7 @@ class StoreService {
 
     this.logAction('User', 'handleApproval', `${status.toUpperCase()} approval request: ${req.title}`);
     this.saveState();
+    syncApprovalToSupabase(req);
   }
 
   public createApprovalRequest(request: Omit<ApprovalRequest, 'id' | 'organizationId' | 'createdAt' | 'status'>) {
@@ -378,6 +399,7 @@ class StoreService {
     };
     this.state.approvals.unshift(newReq);
     this.saveState();
+    syncApprovalToSupabase(newReq);
     return newReq;
   }
 

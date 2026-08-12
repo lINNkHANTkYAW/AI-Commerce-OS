@@ -357,6 +357,7 @@ export async function runAIAgentPipeline(
         customerId: conv.customerId,
         conversationId: conv.id,
         channel: conv.channel || 'telegram',
+        orgId: currentOrg?.id,
       }),
     });
     const data = await res.json();
