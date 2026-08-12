@@ -372,18 +372,12 @@ export async function runAIAgentPipeline(
     console.error('runAIAgentPipeline error:', err);
   }
 
-  // Fallback demo response
-  const lastUserMsg = (conv.messages && conv.messages[conv.messages.length - 1]?.text) || 'Inquiry';
-  const matchedProd = products.find(p => p.name.toLowerCase().includes('asus') || p.name.toLowerCase().includes('laptop') || p.name.toLowerCase().includes('phone'));
-  
-  const searchResult = await executeAITool('search_products', { query: lastUserMsg });
-  const replyText = matchedProd
-    ? `Hello! We have ${matchedProd.name} in stock for ${matchedProd.priceMMK.toLocaleString()} MMK. Would you like me to reserve one for you with Cash on Delivery or KBZPay?`
-    : `Hello ${conv.customerName || 'Customer'}, thank you for contacting us! I have searched our store database. How can I assist you with your purchase today?`;
+  // Safe fallback response when AI service is unavailable
+  const replyText = `Our AI sales assistant is temporarily unavailable. A team member will assist you shortly, or feel free to leave your contact number!`;
 
   return {
     replyText,
-    executedTools: [{ tool: 'search_products', result: searchResult }],
+    executedTools: [],
   };
 }
 

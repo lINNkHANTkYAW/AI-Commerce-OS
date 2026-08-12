@@ -1,20 +1,48 @@
-import React, { useState } from 'react';
-import { MessageSquare, X, Send, Bot, Sparkles, ShoppingBag, CheckCircle2 } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { MessageSquare, X, Send, Bot, Sparkles, CheckCircle2 } from 'lucide-react';
 import { useAppStore } from '../services/store';
 
 export const CustomerChatWidget: React.FC = () => {
   const { state, sendMessage } = useAppStore();
   const [isOpen, setIsOpen] = useState(false);
-  const [messages, setMessages] = useState<Array<{ sender: 'customer' | 'ai'; text: string; executedTools?: any[] }>>([
-    {
-      sender: 'ai',
-      text: 'Hello! Welcome to NovaTech Myanmar. How can I help you find the right laptop or accessory today?',
-    },
-  ]);
   const [inputText, setInputText] = useState('');
   const [isTyping, setIsTyping] = useState(false);
 
-  const activeConv = state.conversations[0];
+  // Dynamic session identity (stored in sessionStorage)
+  const [session, setSession] = useState<{ visitorId: string; conversationId: string; visitorName: string }>(() => {
+    if (typeof window !== 'undefined' && typeof sessionStorage !== 'undefined') {
+      const saved = sessionStorage.getItem('web_chat_session');
+      if (saved) {
+        try {
+          return JSON.parse(saved);
+        } catch (e) {
+          // ignore
+        }
+      }
+      const randomId = Math.random().toString(36).substring(2, 8);
+      const newSess = {
+        visitorId: `visitor_${randomId}`,
+        conversationId: `conv_web_${randomId}`,
+        visitorName: `Web Visitor #${randomId.substring(0, 4)}`,
+      };
+      sessionStorage.setItem('web_chat_session', JSON.stringify(newSess));
+      return newSess;
+    }
+    return {
+      visitorId: 'visitor_demo',
+      conversationId: 'conv_web_demo',
+      visitorName: 'Web Visitor',
+    };
+  });
+
+  const orgName = state.currentOrg?.name || 'NovaTech Store';
+
+  const [messages, setMessages] = useState<Array<{ sender: 'customer' | 'ai'; text: string; executedTools?: any[] }>>([
+    {
+      sender: 'ai',
+      text: `Hello! Welcome to ${orgName}. How can I help you find products, prices, or delivery details today?`,
+    },
+  ]);
 
   const handleSendMessage = async () => {
     if (!inputText.trim()) return;
@@ -24,48 +52,54 @@ export const CustomerChatWidget: React.FC = () => {
 
     setMessages((prev) => [...prev, { sender: 'customer', text: userMsg }]);
 
-    // Sync to main store inbox
-    if (activeConv) {
-      sendMessage(activeConv.id, 'customer', userMsg, 'Thiri Thaw');
-    }
+    // Sync to main store inbox with dynamic conversation ID & visitor name
+    sendMessage(session.conversationId, 'customer', userMsg, session.visitorName);
 
     setIsTyping(true);
 
     try {
-      const res = await fetch('/api/ai/agent', {
+      // Native Web Chat flow: Web Chat -> /api/webhooks/web -> Supabase -> AI -> Supabase -> Inbox
+      const res = await fetch('/api/webhooks/web', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: messages.concat({ sender: 'customer', text: userMsg }),
-          customerId: 'cust_01',
-          conversationId: activeConv?.id || 'conv_01',
-          channel: 'web_chat',
+          messageText: userMsg,
+          customerId: session.visitorId,
+          customerName: session.visitorName,
+          conversationId: session.conversationId,
+          channel: 'web',
+          orgId: state.currentOrg?.id,
         }),
       });
 
       const data = await res.json();
-      if (data.text) {
+      if (data.aiReply) {
         setMessages((prev) => [
           ...prev,
           {
             sender: 'ai',
-            text: data.text,
+            text: data.aiReply,
             executedTools: data.executedTools,
           },
         ]);
 
-        if (activeConv) {
-          sendMessage(activeConv.id, 'ai', data.text, 'AI Sales Agent');
-        }
+        // Sync AI reply to store inbox
+        sendMessage(session.conversationId, 'ai', data.aiReply, 'AI Sales Agent');
+      } else {
+        throw new Error('No AI reply returned');
       }
     } catch (e) {
+      console.warn('[Web Chat AI Fallback]:', e);
+      // Safe fallback when AI request fails (No fake recommendations)
+      const safeFallback = 'Our AI sales assistant is temporarily unavailable. A human team member will assist you shortly!';
       setMessages((prev) => [
         ...prev,
         {
           sender: 'ai',
-          text: 'I have searched our catalogue! I recommend our Student Laptop Pro (1,450,000 MMK) with 16GB RAM and 512GB SSD. I can create a draft order for you!',
+          text: safeFallback,
         },
       ]);
+      sendMessage(session.conversationId, 'ai', safeFallback, 'AI Sales Agent');
     } finally {
       setIsTyping(false);
     }
@@ -91,7 +125,7 @@ export const CustomerChatWidget: React.FC = () => {
                 <Bot className="w-4 h-4 text-white" />
               </div>
               <div>
-                <h4 className="font-bold text-xs text-[#222222]">NovaTech Store Assistant</h4>
+                <h4 className="font-bold text-xs text-[#222222]">{orgName} Assistant</h4>
                 <p className="text-[10px] text-[#A98C63] font-semibold">Live AI Sales Agent</p>
               </div>
             </div>
@@ -125,20 +159,20 @@ export const CustomerChatWidget: React.FC = () => {
 
             {isTyping && (
               <div className="flex items-center gap-1.5 text-xs text-[#A98C63] font-semibold animate-pulse">
-                <Sparkles className="w-3.5 h-3.5 text-[#C5A880]" /> NovaTech AI is checking inventory & prices...
+                <Sparkles className="w-3.5 h-3.5 text-[#C5A880]" /> AI is querying products & stock...
               </div>
             )}
           </div>
 
-          {/* Quick Demo Query Button */}
+          {/* Quick Prompt Button */}
           <div className="p-2 bg-[#FFFFFF] border-t border-[#EAE5DC] text-[11px] overflow-x-auto flex gap-1.5">
             <button
               onClick={() => {
-                setInputText('I need a laptop for university graphic design under 1,500,000 MMK.');
+                setInputText('What are your best available products and current prices?');
               }}
               className="px-2 py-1 neu-button text-[#222222] rounded-md shrink-0 transition border border-[#EAE5DC]"
             >
-              💻 Laptop under 1.5M MMK
+              🛍️ Check Available Products
             </button>
           </div>
 
@@ -149,7 +183,7 @@ export const CustomerChatWidget: React.FC = () => {
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-              placeholder="Ask about laptops, accessories, delivery..."
+              placeholder="Ask about products, prices, delivery..."
               className="flex-1 neu-inset border border-[#EAE5DC] rounded-xl px-3 py-2 text-xs text-[#222222] placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-[#C5A880]"
             />
             <button

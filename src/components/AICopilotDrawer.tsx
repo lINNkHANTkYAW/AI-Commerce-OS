@@ -30,15 +30,25 @@ export const AICopilotDrawer: React.FC<AICopilotDrawerProps> = ({ isOpen, onClos
     setIsQuerying(true);
 
     try {
+      const totalRevenueMMK = state.orders.reduce((sum, o) => sum + (o.totalMMK || 0), 0);
+      const lowStockProducts = state.products.filter((p) => p.stockQuantity <= p.lowStockThreshold).map((p) => `${p.name} (${p.stockQuantity} remaining)`);
+      const topIntentCustomers = state.customers.filter((c) => c.buyingIntentScore >= 70).map((c) => `${c.name} (Score: ${c.buyingIntentScore})`);
+
       const res = await fetch('/api/ai/copilot', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           query: q,
           storeContext: {
+            orgName: state.currentOrg?.name,
             productsCount: state.products.length,
             ordersCount: state.orders.length,
-            leadsCount: state.customers.filter((c) => c.buyingIntentScore > 70).length,
+            totalRevenueMMK,
+            pendingOrdersCount: state.orders.filter((o) => o.status === 'draft' || o.status === 'confirmed').length,
+            leadsCount: state.conversations.length,
+            lowStockProducts,
+            topIntentCustomers,
+            productsList: state.products.map(p => `${p.name}: ${p.priceMMK} MMK (Stock: ${p.stockQuantity})`).join('; '),
           },
         }),
       });
@@ -46,11 +56,13 @@ export const AICopilotDrawer: React.FC<AICopilotDrawerProps> = ({ isOpen, onClos
       const data = await res.json();
       setMessages((prev) => [...prev, { sender: 'ai', text: data.answer || 'Analysis complete.' }]);
     } catch (e) {
+      const totalRevenueMMK = state.orders.reduce((sum, o) => sum + (o.totalMMK || 0), 0);
+      const lowStockList = state.products.filter((p) => p.stockQuantity <= p.lowStockThreshold).map((p) => p.name).join(', ') || 'None';
       setMessages((prev) => [
         ...prev,
         {
           sender: 'ai',
-          text: 'Based on real store records: Student Laptop Pro is your best seller with 1,450,000 MMK price point. Consider restocking USB-C Hubs as current inventory is 2 units.',
+          text: `Based on real DB state for ${state.currentOrg?.name || 'your store'}: You currently have ${state.products.length} products, ${state.orders.length} total orders generating ${totalRevenueMMK.toLocaleString()} MMK. Low stock items requiring restock: ${lowStockList}.`,
         },
       ]);
     } finally {

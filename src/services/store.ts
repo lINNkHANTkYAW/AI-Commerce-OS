@@ -36,7 +36,12 @@ import {
 import {
   syncProductToSupabase,
   syncOrderToSupabase,
-  syncApprovalToSupabase
+  syncApprovalToSupabase,
+  syncConversationToSupabase,
+  syncMessageToSupabase,
+  fetchProductsFromSupabase,
+  fetchOrdersFromSupabase,
+  fetchConversationsFromSupabase,
 } from './supabase';
 
 const STORAGE_KEY = 'ai_commerce_os_state_v1';
@@ -81,6 +86,51 @@ class StoreService {
 
   constructor() {
     this.state = this.loadState();
+    this.initFromSupabase();
+  }
+
+  public async initFromSupabase() {
+    try {
+      const [dbProducts, dbOrders, dbConvs] = await Promise.all([
+        fetchProductsFromSupabase(),
+        fetchOrdersFromSupabase(),
+        fetchConversationsFromSupabase(),
+      ]);
+
+      if (dbProducts && dbProducts.length > 0) {
+        this.state.products = dbProducts;
+      } else {
+        INITIAL_PRODUCTS.forEach((p) => syncProductToSupabase(p));
+      }
+
+      if (dbOrders && dbOrders.length > 0) {
+        this.state.orders = dbOrders;
+      } else {
+        INITIAL_ORDERS.forEach((o) => syncOrderToSupabase(o));
+      }
+
+      if (dbConvs && dbConvs.length > 0) {
+        this.state.conversations = dbConvs.map((row: any) => ({
+          id: row.id,
+          organizationId: row.org_id || 'org_01',
+          channel: row.channel || 'web_chat',
+          customerId: row.customer_id,
+          unread: false,
+          priority: 'medium',
+          leadTemperature: 'warm',
+          aiConfidenceScore: 90,
+          humanHandoffRequired: false,
+          status: row.status || 'active',
+          assignedToRole: 'sales',
+          lastMessageText: row.last_message || '',
+          updatedAt: row.updated_at || new Date().toISOString(),
+        }));
+      }
+
+      this.saveState();
+    } catch (err) {
+      console.warn('[Store DB Init Notice]:', err);
+    }
   }
 
   private loadState(): AppState {
@@ -238,6 +288,25 @@ class StoreService {
     }
 
     this.saveState();
+
+    const cust = this.state.customers.find((c) => c.id === conv?.customerId);
+    const custName = cust?.name || senderName || 'Customer';
+
+    syncConversationToSupabase({
+      id: conversationId,
+      orgId: this.state.currentOrg.id,
+      channel: conv?.channel || 'web',
+      customerId: conv?.customerId || 'cust_anon',
+      customerName: custName,
+      lastMessage: text,
+    });
+
+    syncMessageToSupabase({
+      conversationId,
+      sender,
+      text,
+    });
+
     return message;
   }
 

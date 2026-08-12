@@ -93,20 +93,20 @@ app.get('/api/supabase/status', async (req: Request, res: Response) => {
 // 1. AI Sales & Support Agent with Tool Calling & Supabase Persistence
 app.post('/api/ai/agent', async (req: Request, res: Response) => {
   try {
-    const { messages, customerId, conversationId, channel, orgId } = req.body;
+    const { messages, customerId, conversationId, channel, orgId, orgName = 'NovaTech Myanmar' } = req.body;
 
     const ai = getGeminiClient();
 
-    const systemInstruction = `You are the Action-Taking AI Sales & Support Agent for "NovaTech Myanmar" (AI Commerce OS).
+    const systemInstruction = `You are the Action-Taking AI Sales & Support Agent for "${orgName}".
 Your primary role is to assist ASEAN and Myanmar customers with product inquiries, recommendations, order creation, and support questions.
 
 RULES:
 1. ALWAYS use the provided tools (e.g. search_products, get_product_details, check_inventory, calculate_order_total, create_draft_order, get_customer_profile, search_business_knowledge) to verify products, prices, stock, and policies.
 2. NEVER invent non-existent products, prices, or false stock quantities.
-3. Prices in Myanmar are in Myanmar Kyat (MMK). Laptops range from 850,000 MMK to 2,200,000 MMK.
+3. Prices are in MMK (Myanmar Kyat) or local currency.
 4. When a customer expresses interest in a product with a budget, use search_products to find exact matches.
 5. When customer confirms wanting to order, collect Name, Phone, and Address, then call create_draft_order.
-6. Be friendly, polite, clear, professional, and helpful. You can speak English and acknowledge Myanmar/Myanglish phrases politely.`;
+6. Be friendly, polite, clear, professional, and helpful. You can speak English and acknowledge local Myanmar phrases politely.`;
 
     // Format message history
     const contents = (messages || []).map((m: any) => ({
@@ -188,15 +188,16 @@ RULES:
 // 2. AI Campaign Autopilot Generator
 app.post('/api/ai/campaign', async (req: Request, res: Response) => {
   try {
-    const { prompt, budgetUSD = 100 } = req.body;
+    const { prompt, budgetUSD = 100, orgName = 'NovaTech Store', brandVoice = 'Friendly, professional', productsContext } = req.body;
 
     const ai = getGeminiClient();
 
-    const systemInstruction = `You are the AI Campaign Autopilot for NovaTech Myanmar.
-Generate a comprehensive, ready-to-launch marketing campaign based on the business owner's natural language request.
-Your output MUST be a valid JSON object matching the requested schema exactly.
+    const systemInstruction = `You are the AI Campaign Autopilot for "${orgName}".
+Tone of Voice: ${brandVoice}.
+Product Catalogue Context: ${productsContext || 'Electronics, Products, Accessories'}.
 
-Target Market: Myanmar & ASEAN students and tech buyers.
+Generate a comprehensive, ready-to-launch marketing campaign based on the business owner's request.
+Your output MUST be a valid JSON object matching the requested schema exactly.
 Primary Currency: MMK (Myanmar Kyat) with USD equivalent.`;
 
     const campaignSchema = {
@@ -279,18 +280,24 @@ app.post('/api/ai/copilot', async (req: Request, res: Response) => {
 
     const ai = getGeminiClient();
 
-    const systemInstruction = `You are Sale Brain AI Business Copilot for the business owner of NovaTech Myanmar.
-You analyze store metrics, orders, stock levels, and marketing performance to answer business questions clearly with actionable advice.`;
+    const orgName = storeContext?.orgName || 'your business';
+    const systemInstruction = `You are Sale Brain AI Business Copilot for the business owner of "${orgName}".
+You analyze live database metrics, orders, stock levels, and marketing performance to answer business questions clearly with actionable advice.`;
 
-    const contextPrompt = `Business Context:
-- Active Products: ${storeContext?.productsCount || 7}
-- Total Orders: ${storeContext?.ordersCount || 12}
-- Unclosed Leads: ${storeContext?.leadsCount || 3}
-- Currency: MMK / USD
+    const contextPrompt = `Live Store Database Context:
+- Organization Name: ${orgName}
+- Active Products: ${storeContext?.productsCount || 0}
+- Products Catalogue: ${storeContext?.productsList || 'N/A'}
+- Total Orders Count: ${storeContext?.ordersCount || 0}
+- Total Revenue (MMK): ${storeContext?.totalRevenueMMK ? storeContext.totalRevenueMMK.toLocaleString() : '0'} MMK
+- Pending Orders: ${storeContext?.pendingOrdersCount || 0}
+- Total Customer Leads: ${storeContext?.leadsCount || 0}
+- Low Stock Items: ${Array.isArray(storeContext?.lowStockProducts) ? storeContext.lowStockProducts.join(', ') : storeContext?.lowStockProducts || 'None'}
+- Top Intent Customers: ${Array.isArray(storeContext?.topIntentCustomers) ? storeContext.topIntentCustomers.join(', ') : 'None'}
 
 User Query: "${query}"
 
-Provide a direct, insightful response with key numbers, root cause analysis if relevant, and 2 concrete next actions.`;
+Provide a direct, insightful response based strictly on these live database numbers, with clear root cause analysis if relevant, and 2 concrete next steps.`;
 
     const response = await ai.models.generateContent({
       model: 'gemini-3.6-flash',
@@ -301,7 +308,7 @@ Provide a direct, insightful response with key numbers, root cause analysis if r
     });
 
     res.json({
-      answer: response.text || 'I have analyzed your business records. Sales and inquiries are performing steadily.',
+      answer: response.text || `Analysis complete for ${orgName}. Total revenue is ${storeContext?.totalRevenueMMK ? storeContext.totalRevenueMMK.toLocaleString() : '0'} MMK across ${storeContext?.ordersCount || 0} orders.`,
     });
   } catch (error: any) {
     console.error('Error in /api/ai/copilot:', error);

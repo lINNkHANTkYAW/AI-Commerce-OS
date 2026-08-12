@@ -43,6 +43,12 @@ export const Header: React.FC<HeaderProps> = ({ onOpenCopilot, onNavigateTab }) 
 
       {/* Right Action Bar */}
       <div className="flex items-center gap-3">
+        {/* Supabase Status Pill */}
+        <div className="hidden md:flex items-center gap-1.5 neu-button text-emerald-700 px-3 py-2 rounded-xl text-xs font-semibold">
+          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span>Supabase DB</span>
+        </div>
+
         {/* Role Switcher Pill */}
         <div className="relative">
           <button

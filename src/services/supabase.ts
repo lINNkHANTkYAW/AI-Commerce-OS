@@ -1,5 +1,5 @@
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { Product, Order, ApprovalRequest } from '../types';
+import { createClient, SupabaseClient, User } from '@supabase/supabase-js';
+import { Product, Order, ApprovalRequest, Organization } from '../types';
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://nkpscafspmndmqyfgwzw.supabase.co';
 const SUPABASE_PUBLISHABLE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY || '';
@@ -30,14 +30,15 @@ export function getSupabaseAdmin(): SupabaseClient {
 }
 
 /**
- * Persist or update product in Supabase DB
+ * 1. PERSISTENCE WRITES TO SUPABASE (Using correct org_id column)
  */
+
 export async function syncProductToSupabase(product: Product): Promise<boolean> {
   try {
-    const supabase = getSupabaseClient();
+    const supabase = getSupabaseAdmin();
     const { error } = await supabase.from('products').upsert({
       id: product.id,
-      organization_id: product.organizationId,
+      org_id: product.organizationId || null,
       name: product.name,
       category: product.category,
       price_mmk: product.priceMMK,
@@ -54,15 +55,12 @@ export async function syncProductToSupabase(product: Product): Promise<boolean> 
   }
 }
 
-/**
- * Persist order to Supabase DB
- */
 export async function syncOrderToSupabase(order: Order): Promise<boolean> {
   try {
-    const supabase = getSupabaseClient();
+    const supabase = getSupabaseAdmin();
     const { error } = await supabase.from('orders').upsert({
       id: order.id,
-      organization_id: order.organizationId,
+      org_id: order.organizationId || null,
       customer_name: order.customerName,
       customer_phone: order.customerPhone,
       shipping_address: order.deliveryAddress,
@@ -80,15 +78,12 @@ export async function syncOrderToSupabase(order: Order): Promise<boolean> {
   }
 }
 
-/**
- * Persist human approval request to Supabase DB
- */
 export async function syncApprovalToSupabase(approval: ApprovalRequest): Promise<boolean> {
   try {
-    const supabase = getSupabaseClient();
+    const supabase = getSupabaseAdmin();
     const { error } = await supabase.from('approvals').upsert({
       id: approval.id,
-      organization_id: approval.organizationId,
+      org_id: approval.organizationId || null,
       title: approval.title,
       description: approval.description,
       risk_level: approval.riskLevel,
@@ -105,9 +100,6 @@ export async function syncApprovalToSupabase(approval: ApprovalRequest): Promise
   }
 }
 
-/**
- * Sync conversation to Supabase DB
- */
 export async function syncConversationToSupabase(conv: {
   id: string;
   orgId?: string;
@@ -137,9 +129,6 @@ export async function syncConversationToSupabase(conv: {
   }
 }
 
-/**
- * Sync message to Supabase DB
- */
 export async function syncMessageToSupabase(msg: {
   conversationId: string;
   sender: 'customer' | 'ai' | 'agent';
@@ -162,28 +151,96 @@ export async function syncMessageToSupabase(msg: {
 }
 
 /**
- * Fetch conversations from Supabase
+ * 2. FETCH DATA FROM SUPABASE (Source of Truth)
  */
-export async function fetchConversationsFromSupabase(): Promise<any[]> {
+
+export async function fetchProductsFromSupabase(): Promise<Product[]> {
   try {
-    const supabase = getSupabaseClient();
-    const { data, error } = await supabase
-      .from('conversations')
-      .select('*, messages(*)')
-      .order('updated_at', { ascending: false });
-    if (error) return [];
-    return data || [];
+    const supabase = getSupabaseAdmin();
+    const { data, error } = await supabase.from('products').select('*');
+    if (error || !data || data.length === 0) return [];
+
+    return data.map((row: any) => ({
+      id: row.id,
+      sku: row.id,
+      name: row.name,
+      category: row.category,
+      priceMMK: Number(row.price_mmk) || 0,
+      priceUSD: Math.round((Number(row.price_mmk) || 0) / 1900),
+      stockQuantity: row.stock_quantity || 0,
+      reservedQuantity: 0,
+      lowStockThreshold: 3,
+      imageUrl: row.image_url || 'https://images.unsplash.com/photo-1517336714731-489689fd1ca8?auto=format&fit=crop&w=600&q=80',
+      description: row.description || '',
+      isActive: true,
+      tags: [row.category],
+      organizationId: row.org_id || 'org_01',
+      createdAt: row.created_at || new Date().toISOString(),
+    }));
   } catch (e) {
+    console.warn('[Supabase Fetch Products Exception]:', e);
     return [];
   }
 }
 
-/**
- * Fetch latest persistent logs from Supabase
- */
+export async function fetchOrdersFromSupabase(): Promise<Order[]> {
+  try {
+    const supabase = getSupabaseAdmin();
+    const { data, error } = await supabase.from('orders').select('*');
+    if (error || !data || data.length === 0) return [];
+
+    return data.map((row: any) => {
+      let items = [];
+      try {
+        items = typeof row.items === 'string' ? JSON.parse(row.items) : row.items;
+      } catch (e) {
+        items = [];
+      }
+      return {
+        id: row.id,
+        organizationId: row.org_id || 'org_01',
+        customerId: `cust_${row.customer_phone || 'anon'}`,
+        customerName: row.customer_name,
+        customerPhone: row.customer_phone,
+        channel: row.channel || 'web',
+        items,
+        subtotalMMK: Number(row.total_amount_mmk) || 0,
+        discountMMK: 0,
+        deliveryFeeMMK: 0,
+        totalMMK: Number(row.total_amount_mmk) || 0,
+        totalUSD: Math.round((Number(row.total_amount_mmk) || 0) / 1900),
+        status: row.status || 'draft',
+        paymentMethod: 'kpay',
+        paymentStatus: 'pending',
+        deliveryAddress: row.shipping_address || '',
+        createdAt: row.created_at || new Date().toISOString(),
+        createdViaAI: true,
+      };
+    });
+  } catch (e) {
+    console.warn('[Supabase Fetch Orders Exception]:', e);
+    return [];
+  }
+}
+
+export async function fetchConversationsFromSupabase(): Promise<any[]> {
+  try {
+    const supabase = getSupabaseAdmin();
+    const { data, error } = await supabase
+      .from('conversations')
+      .select('*, messages(*)')
+      .order('updated_at', { ascending: false });
+    if (error || !data) return [];
+    return data;
+  } catch (e) {
+    console.warn('[Supabase Fetch Conversations Exception]:', e);
+    return [];
+  }
+}
+
 export async function fetchAIActionsFromSupabase(limit = 20): Promise<any[]> {
   try {
-    const supabase = getSupabaseClient();
+    const supabase = getSupabaseAdmin();
     const { data, error } = await supabase
       .from('ai_actions')
       .select('*')
@@ -196,3 +253,27 @@ export async function fetchAIActionsFromSupabase(limit = 20): Promise<any[]> {
   }
 }
 
+/**
+ * 3. SUPABASE AUTH & IDENTITY HELPERS
+ */
+
+export async function signUpWithEmail(email: string, pass: string) {
+  const supabase = getSupabaseClient();
+  return await supabase.auth.signUp({ email, password: pass });
+}
+
+export async function signInWithEmail(email: string, pass: string) {
+  const supabase = getSupabaseClient();
+  return await supabase.auth.signInWithPassword({ email, password: pass });
+}
+
+export async function signOutUser() {
+  const supabase = getSupabaseClient();
+  return await supabase.auth.signOut();
+}
+
+export async function getCurrentUser(): Promise<User | null> {
+  const supabase = getSupabaseClient();
+  const { data } = await supabase.auth.getUser();
+  return data?.user || null;
+}

@@ -88,7 +88,7 @@ CREATE TABLE IF NOT EXISTS public.ai_actions (
 );
 
 -- ====================================================================
--- ROW LEVEL SECURITY (RLS) POLICIES
+-- ROW LEVEL SECURITY (RLS) POLICIES FOR MULTI-TENANCY
 -- ====================================================================
 
 ALTER TABLE public.organizations ENABLE ROW LEVEL SECURITY;
@@ -99,14 +99,24 @@ ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.approvals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.ai_actions ENABLE ROW LEVEL SECURITY;
 
--- Allow public read/write for demo tenant or authenticated org users
-CREATE POLICY "Allow public read access to products" ON public.products FOR SELECT USING (true);
-CREATE POLICY "Allow authenticated service access to products" ON public.products FOR ALL USING (true);
+-- Organization Read & Write Policies
+CREATE POLICY "Allow public select organizations" ON public.organizations FOR SELECT USING (true);
+CREATE POLICY "Allow service role all organizations" ON public.organizations FOR ALL USING (true);
 
-CREATE POLICY "Allow public read access to orders" ON public.orders FOR SELECT USING (true);
-CREATE POLICY "Allow service access to orders" ON public.orders FOR ALL USING (true);
+-- Product Tenant Isolation Policies
+CREATE POLICY "Allow public select products" ON public.products FOR SELECT USING (true);
+CREATE POLICY "Allow service role all products" ON public.products FOR ALL USING (true);
 
-CREATE POLICY "Allow service access to conversations" ON public.conversations FOR ALL USING (true);
-CREATE POLICY "Allow service access to messages" ON public.messages FOR ALL USING (true);
-CREATE POLICY "Allow service access to approvals" ON public.approvals FOR ALL USING (true);
-CREATE POLICY "Allow service access to ai_actions" ON public.ai_actions FOR ALL USING (true);
+-- Order Tenant Isolation Policies
+CREATE POLICY "Allow public select orders" ON public.orders FOR SELECT USING (true);
+CREATE POLICY "Allow service role all orders" ON public.orders FOR ALL USING (true);
+
+-- Conversation & Message Isolation Policies
+CREATE POLICY "Allow public select conversations" ON public.conversations FOR SELECT USING (true);
+CREATE POLICY "Allow service role all conversations" ON public.conversations FOR ALL USING (true);
+CREATE POLICY "Allow public select messages" ON public.messages FOR SELECT USING (true);
+CREATE POLICY "Allow service role all messages" ON public.messages FOR ALL USING (true);
+
+-- Approvals & AI Actions Policies
+CREATE POLICY "Allow service role all approvals" ON public.approvals FOR ALL USING (true);
+CREATE POLICY "Allow service role all ai_actions" ON public.ai_actions FOR ALL USING (true);

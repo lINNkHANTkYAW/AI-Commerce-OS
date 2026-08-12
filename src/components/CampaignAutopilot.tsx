@@ -46,6 +46,9 @@ export const CampaignAutopilot: React.FC<CampaignAutopilotProps> = ({ onNavigate
         body: JSON.stringify({
           prompt: promptInput,
           budgetUSD,
+          orgName: state.currentOrg?.name,
+          brandVoice: state.currentOrg?.toneOfVoice,
+          productsContext: state.products.map(p => `${p.name} (${p.category}): ${p.priceMMK} MMK`).slice(0, 8).join('; '),
         }),
       });
 
