@@ -4,7 +4,7 @@ import dotenv from 'dotenv';
 import { GoogleGenAI, Type } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
 import { AI_TOOL_DECLARATIONS, executeAITool } from './src/services/aiTools';
-import { getSupabaseAdmin, getSupabaseClient, syncConversationToSupabase, syncMessageToSupabase } from './src/services/supabase';
+import { getSupabaseAdmin, getSupabaseClient, syncConversationToSupabase, syncMessageToSupabase, toValidUuid } from './src/services/supabase';
 
 dotenv.config();
 
@@ -31,6 +31,7 @@ async function logAIActionToSupabase(toolName: string, args: any, result: any, o
   try {
     const supabase = getSupabaseAdmin();
     await supabase.from('ai_actions').insert({
+      org_id: toValidUuid(orgId),
       tool_name: toolName,
       arguments: args,
       result: result,

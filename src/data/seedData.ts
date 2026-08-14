@@ -15,7 +15,7 @@ import {
 } from '../types';
 
 export const DEMO_ORGANIZATION: Organization = {
-  id: 'org_novatech_01',
+  id: 'a0000000-0000-0000-0000-000000000001',
   name: 'NovaTech Myanmar',
   industry: 'Electronics & Consumer Retail',
   country: 'Myanmar',

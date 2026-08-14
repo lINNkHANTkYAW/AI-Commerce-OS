@@ -68,7 +68,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({
   ];
 
   return (
-    <aside className="w-64 text-[#222222] flex flex-col shrink-0 h-screen sticky top-0 z-20 neu-flat rounded-r-2xl overflow-hidden border-r-0">
+    <aside className="w-64 text-[#222222] flex flex-col shrink-0 h-full min-h-0 z-20 neu-flat rounded-r-2xl overflow-hidden border-r-0">
       {/* Brand Header */}
       <div className="p-4 border-b border-[#EAE5DC] flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -131,7 +131,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({
       </nav>
 
       {/* Footer Controls: AI Copilot & Language Switcher */}
-      <div className="p-3 border-t border-[#EAE5DC] space-y-2 neu-inset">
+      <div className="p-3 border-t border-[#EAE5DC] space-y-2 neu-inset shrink-0">
         <button
           onClick={onOpenCopilot}
           className="w-full flex items-center justify-center gap-2 neu-button text-[#222222] text-xs font-semibold py-2 px-3 rounded-xl transition"

@@ -29,16 +29,89 @@ export function getSupabaseAdmin(): SupabaseClient {
   return supabaseAdminClient;
 }
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const DEFAULT_DEMO_ORG_UUID = 'a0000000-0000-0000-0000-000000000001';
+
+export function toValidUuid(id?: string | null): string {
+  if (!id) return DEFAULT_DEMO_ORG_UUID;
+  if (UUID_REGEX.test(id)) return id.toLowerCase();
+  if (id === 'org_01' || id === 'demo_org' || id.toLowerCase().includes('novatech')) {
+    return DEFAULT_DEMO_ORG_UUID;
+  }
+
+  // Generate deterministic valid UUID for any string org id (e.g. org_12345)
+  let hash1 = 5381;
+  let hash2 = 52711;
+  for (let i = 0; i < id.length; i++) {
+    const char = id.charCodeAt(i);
+    hash1 = ((hash1 << 5) + hash1) ^ char;
+    hash2 = ((hash2 << 5) + hash2) ^ char;
+  }
+  const h1 = (hash1 >>> 0).toString(16).padStart(8, '0');
+  const h2 = (hash2 >>> 0).toString(16).padStart(8, '0');
+  const cleanId = id.replace(/[^a-zA-Z0-9]/g, '').padEnd(16, '0').slice(0, 16);
+  const h3 = Array.from(cleanId).map((c) => (c.charCodeAt(0) % 16).toString(16)).join('').slice(0, 16);
+
+  const p1 = h1;
+  const p2 = h2.slice(0, 4);
+  const p3 = '4' + h2.slice(4, 7);
+  const p4 = 'a' + h3.slice(0, 3);
+  const p5 = h3.slice(3, 15).padEnd(12, '0');
+
+  const uuid = `${p1}-${p2}-${p3}-${p4}-${p5}`;
+  return UUID_REGEX.test(uuid) ? uuid : DEFAULT_DEMO_ORG_UUID;
+}
+
+const ensuredOrgIds = new Set<string>();
+
+/**
+ * Ensures the organization record exists in Supabase so foreign key constraints on products/orders/etc. are satisfied.
+ */
+export async function ensureOrganizationInSupabase(orgId?: string | null, orgName?: string): Promise<string> {
+  const validUuid = toValidUuid(orgId);
+  if (ensuredOrgIds.has(validUuid)) {
+    return validUuid;
+  }
+
+  try {
+    const supabase = getSupabaseAdmin();
+    const isDemo = validUuid === DEFAULT_DEMO_ORG_UUID;
+    const defaultName = isDemo ? 'NovaTech Myanmar' : 'Custom Store';
+
+    const { error } = await supabase.from('organizations').upsert(
+      {
+        id: validUuid,
+        name: orgName || defaultName,
+        country: 'Myanmar',
+        currency: 'MMK',
+        tone_of_voice: 'Friendly, tech-savvy',
+      },
+      { onConflict: 'id' }
+    );
+
+    if (!error) {
+      ensuredOrgIds.add(validUuid);
+    } else {
+      console.warn('[Supabase ensureOrg Error]:', error.message);
+    }
+  } catch (e) {
+    console.warn('[Supabase ensureOrg Exception]:', e);
+  }
+
+  return validUuid;
+}
+
 /**
  * 1. PERSISTENCE WRITES TO SUPABASE (Using correct org_id column)
  */
 
 export async function syncProductToSupabase(product: Product): Promise<boolean> {
   try {
+    const orgId = await ensureOrganizationInSupabase(product.organizationId);
     const supabase = getSupabaseAdmin();
     const { error } = await supabase.from('products').upsert({
       id: product.id,
-      org_id: product.organizationId || null,
+      org_id: orgId,
       name: product.name,
       category: product.category,
       price_mmk: product.priceMMK,
@@ -57,10 +130,11 @@ export async function syncProductToSupabase(product: Product): Promise<boolean> 
 
 export async function syncOrderToSupabase(order: Order): Promise<boolean> {
   try {
+    const orgId = await ensureOrganizationInSupabase(order.organizationId);
     const supabase = getSupabaseAdmin();
     const { error } = await supabase.from('orders').upsert({
       id: order.id,
-      org_id: order.organizationId || null,
+      org_id: orgId,
       customer_name: order.customerName,
       customer_phone: order.customerPhone,
       shipping_address: order.deliveryAddress,
@@ -80,10 +154,11 @@ export async function syncOrderToSupabase(order: Order): Promise<boolean> {
 
 export async function syncApprovalToSupabase(approval: ApprovalRequest): Promise<boolean> {
   try {
+    const orgId = await ensureOrganizationInSupabase(approval.organizationId);
     const supabase = getSupabaseAdmin();
     const { error } = await supabase.from('approvals').upsert({
       id: approval.id,
-      org_id: approval.organizationId || null,
+      org_id: orgId,
       title: approval.title,
       description: approval.description,
       risk_level: approval.riskLevel,
@@ -110,10 +185,11 @@ export async function syncConversationToSupabase(conv: {
   lastMessage?: string;
 }): Promise<boolean> {
   try {
+    const orgId = await ensureOrganizationInSupabase(conv.orgId);
     const supabase = getSupabaseAdmin();
     const { error } = await supabase.from('conversations').upsert({
       id: conv.id,
-      org_id: conv.orgId || null,
+      org_id: orgId,
       channel: conv.channel,
       customer_id: conv.customerId,
       customer_name: conv.customerName,
@@ -154,10 +230,14 @@ export async function syncMessageToSupabase(msg: {
  * 2. FETCH DATA FROM SUPABASE (Source of Truth)
  */
 
-export async function fetchProductsFromSupabase(): Promise<Product[]> {
+export async function fetchProductsFromSupabase(orgId?: string): Promise<Product[]> {
   try {
     const supabase = getSupabaseAdmin();
-    const { data, error } = await supabase.from('products').select('*');
+    let query = supabase.from('products').select('*');
+    if (orgId) {
+      query = query.eq('org_id', toValidUuid(orgId));
+    }
+    const { data, error } = await query;
     if (error || !data || data.length === 0) return [];
 
     return data.map((row: any) => ({
@@ -174,7 +254,7 @@ export async function fetchProductsFromSupabase(): Promise<Product[]> {
       description: row.description || '',
       isActive: true,
       tags: [row.category],
-      organizationId: row.org_id || 'org_01',
+      organizationId: row.org_id || orgId || 'a0000000-0000-0000-0000-000000000001',
       createdAt: row.created_at || new Date().toISOString(),
     }));
   } catch (e) {
@@ -183,10 +263,14 @@ export async function fetchProductsFromSupabase(): Promise<Product[]> {
   }
 }
 
-export async function fetchOrdersFromSupabase(): Promise<Order[]> {
+export async function fetchOrdersFromSupabase(orgId?: string): Promise<Order[]> {
   try {
     const supabase = getSupabaseAdmin();
-    const { data, error } = await supabase.from('orders').select('*');
+    let query = supabase.from('orders').select('*');
+    if (orgId) {
+      query = query.eq('org_id', toValidUuid(orgId));
+    }
+    const { data, error } = await query;
     if (error || !data || data.length === 0) return [];
 
     return data.map((row: any) => {
@@ -198,7 +282,7 @@ export async function fetchOrdersFromSupabase(): Promise<Order[]> {
       }
       return {
         id: row.id,
-        organizationId: row.org_id || 'org_01',
+        organizationId: row.org_id || orgId || 'a0000000-0000-0000-0000-000000000001',
         customerId: `cust_${row.customer_phone || 'anon'}`,
         customerName: row.customer_name,
         customerPhone: row.customer_phone,
@@ -223,13 +307,14 @@ export async function fetchOrdersFromSupabase(): Promise<Order[]> {
   }
 }
 
-export async function fetchConversationsFromSupabase(): Promise<any[]> {
+export async function fetchConversationsFromSupabase(orgId?: string): Promise<any[]> {
   try {
     const supabase = getSupabaseAdmin();
-    const { data, error } = await supabase
-      .from('conversations')
-      .select('*, messages(*)')
-      .order('updated_at', { ascending: false });
+    let query = supabase.from('conversations').select('*, messages(*)');
+    if (orgId) {
+      query = query.eq('org_id', toValidUuid(orgId));
+    }
+    const { data, error } = await query.order('updated_at', { ascending: false });
     if (error || !data) return [];
     return data;
   } catch (e) {

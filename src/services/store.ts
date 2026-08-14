@@ -42,6 +42,7 @@ import {
   fetchProductsFromSupabase,
   fetchOrdersFromSupabase,
   fetchConversationsFromSupabase,
+  ensureOrganizationInSupabase,
 } from './supabase';
 
 const STORAGE_KEY = 'ai_commerce_os_state_v1';
@@ -91,40 +92,52 @@ class StoreService {
 
   public async initFromSupabase() {
     try {
-      const [dbProducts, dbOrders, dbConvs] = await Promise.all([
-        fetchProductsFromSupabase(),
-        fetchOrdersFromSupabase(),
-        fetchConversationsFromSupabase(),
-      ]);
+      const orgId = this.state.currentOrg?.id || DEMO_ORGANIZATION.id;
+      const isDemo = orgId === DEMO_ORGANIZATION.id || this.state.currentOrg?.name?.toLowerCase().includes('novatech');
 
-      if (dbProducts && dbProducts.length > 0) {
-        this.state.products = dbProducts;
+      if (isDemo) {
+        await ensureOrganizationInSupabase(orgId, this.state.currentOrg?.name);
+        const [dbProducts, dbOrders, dbConvs] = await Promise.all([
+          fetchProductsFromSupabase(orgId),
+          fetchOrdersFromSupabase(orgId),
+          fetchConversationsFromSupabase(orgId),
+        ]);
+
+        if (dbProducts && dbProducts.length > 0) {
+          this.state.products = dbProducts;
+        } else {
+          for (const p of INITIAL_PRODUCTS) {
+            await syncProductToSupabase(p);
+          }
+        }
+
+        if (dbOrders && dbOrders.length > 0) {
+          this.state.orders = dbOrders;
+        } else {
+          for (const o of INITIAL_ORDERS) {
+            await syncOrderToSupabase(o);
+          }
+        }
+
+        if (dbConvs && dbConvs.length > 0) {
+          this.state.conversations = dbConvs.map((row: any) => ({
+            id: row.id,
+            organizationId: row.org_id || orgId,
+            channel: row.channel || 'web_chat',
+            customerId: row.customer_id,
+            unread: false,
+            priority: 'medium',
+            leadTemperature: 'warm',
+            aiConfidenceScore: 90,
+            humanHandoffRequired: false,
+            status: row.status || 'active',
+            assignedToRole: 'sales',
+            lastMessageText: row.last_message || '',
+            updatedAt: row.updated_at || new Date().toISOString(),
+          }));
+        }
       } else {
-        INITIAL_PRODUCTS.forEach((p) => syncProductToSupabase(p));
-      }
-
-      if (dbOrders && dbOrders.length > 0) {
-        this.state.orders = dbOrders;
-      } else {
-        INITIAL_ORDERS.forEach((o) => syncOrderToSupabase(o));
-      }
-
-      if (dbConvs && dbConvs.length > 0) {
-        this.state.conversations = dbConvs.map((row: any) => ({
-          id: row.id,
-          organizationId: row.org_id || 'org_01',
-          channel: row.channel || 'web_chat',
-          customerId: row.customer_id,
-          unread: false,
-          priority: 'medium',
-          leadTemperature: 'warm',
-          aiConfidenceScore: 90,
-          humanHandoffRequired: false,
-          status: row.status || 'active',
-          assignedToRole: 'sales',
-          lastMessageText: row.last_message || '',
-          updatedAt: row.updated_at || new Date().toISOString(),
-        }));
+        await this.switchOrganization(this.state.currentOrg);
       }
 
       this.saveState();
@@ -155,6 +168,22 @@ class StoreService {
     try {
       if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(this.state));
+        if (this.state.currentOrg?.id && this.state.currentOrg.id !== DEMO_ORGANIZATION.id) {
+          const orgData = {
+            products: this.state.products,
+            customers: this.state.customers,
+            conversations: this.state.conversations,
+            messages: this.state.messages,
+            orders: this.state.orders,
+            campaigns: this.state.campaigns,
+            scheduledPosts: this.state.scheduledPosts,
+            approvals: this.state.approvals,
+            recommendations: this.state.recommendations,
+            knowledgeDocs: this.state.knowledgeDocs,
+            auditLogs: this.state.auditLogs,
+          };
+          localStorage.setItem(`ai_commerce_os_org_${this.state.currentOrg.id}`, JSON.stringify(orgData));
+        }
       }
     } catch (e) {
       console.error('Failed to save state to localStorage:', e);
@@ -176,8 +205,7 @@ class StoreService {
   }
 
   public resetDemoData() {
-    this.state = getDefaultState();
-    this.saveState();
+    this.switchOrganization(DEMO_ORGANIZATION);
   }
 
   public setLanguage(lang: 'en' | 'my') {
@@ -190,8 +218,127 @@ class StoreService {
     this.saveState();
   }
 
-  public switchOrganization(org: Organization) {
+  public async switchOrganization(org: Organization) {
     this.state.currentOrg = org;
+    const isDemo = org.id === DEMO_ORGANIZATION.id || org.name.toLowerCase().includes('novatech');
+
+    if (isDemo) {
+      this.state.products = INITIAL_PRODUCTS;
+      this.state.customers = INITIAL_CUSTOMERS;
+      this.state.conversations = INITIAL_CONVERSATIONS;
+      this.state.messages = INITIAL_MESSAGES;
+      this.state.orders = INITIAL_ORDERS;
+      this.state.campaigns = INITIAL_CAMPAIGNS;
+      this.state.scheduledPosts = INITIAL_SCHEDULED_POSTS;
+      this.state.approvals = INITIAL_APPROVALS;
+      this.state.recommendations = INITIAL_RECOMMENDATIONS;
+      this.state.knowledgeDocs = INITIAL_KNOWLEDGE;
+      this.state.auditLogs = INITIAL_AUDIT_LOGS;
+    } else {
+      let loadedLocal = false;
+      if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+        const saved = localStorage.getItem(`ai_commerce_os_org_${org.id}`);
+        if (saved) {
+          try {
+            const parsed = JSON.parse(saved);
+            this.state.products = parsed.products || [];
+            this.state.customers = parsed.customers || [];
+            this.state.conversations = parsed.conversations || [];
+            this.state.messages = parsed.messages || [];
+            this.state.orders = parsed.orders || [];
+            this.state.campaigns = parsed.campaigns || [];
+            this.state.scheduledPosts = parsed.scheduledPosts || [];
+            this.state.approvals = parsed.approvals || [];
+            this.state.recommendations = parsed.recommendations || [];
+            this.state.knowledgeDocs = parsed.knowledgeDocs || [];
+            this.state.auditLogs = parsed.auditLogs || [];
+            loadedLocal = true;
+          } catch (e) {
+            console.warn('Failed to parse org local state:', e);
+          }
+        }
+      }
+
+      if (!loadedLocal) {
+        this.state.products = [];
+        this.state.customers = [];
+        this.state.conversations = [];
+        this.state.messages = [];
+        this.state.orders = [];
+        this.state.campaigns = [];
+        this.state.scheduledPosts = [];
+        this.state.approvals = [];
+        this.state.recommendations = [
+          {
+            id: `rec_welcome_${org.id}`,
+            organizationId: org.id,
+            title: `Welcome to ${org.name}!`,
+            summary: `Your custom business store for ${org.name} (${org.country || 'Myanmar'}) is active. Add your first product, connect sales channels, or launch AI Campaign Autopilot.`,
+            supportingData: `Active Store: ${org.name}`,
+            suggestedAction: 'Add product or configure AI channels',
+            actionType: 'restock',
+            confidenceScore: 99,
+            dismissed: false,
+            createdAt: new Date().toISOString(),
+          },
+        ];
+        this.state.knowledgeDocs = [
+          {
+            id: `doc_welcome_${org.id}`,
+            organizationId: org.id,
+            title: `${org.name} Store Configuration`,
+            category: 'faq',
+            content: `Store Name: ${org.name}\nCountry: ${org.country || 'Myanmar'}\nCurrency: ${org.currency || 'MMK'}\nTone of Voice: ${org.toneOfVoice || 'Friendly, professional'}`,
+            updatedAt: new Date().toISOString(),
+          },
+        ];
+        this.state.auditLogs = [
+          {
+            id: `log_init_${org.id}`,
+            organizationId: org.id,
+            actor: 'System',
+            action: 'activateStore',
+            details: `Activated business store workspace for "${org.name}"`,
+            timestamp: new Date().toISOString(),
+          },
+        ];
+      }
+
+      try {
+        const [dbProducts, dbOrders, dbConvs] = await Promise.all([
+          fetchProductsFromSupabase(org.id),
+          fetchOrdersFromSupabase(org.id),
+          fetchConversationsFromSupabase(org.id),
+        ]);
+
+        if (dbProducts && dbProducts.length > 0) {
+          this.state.products = dbProducts;
+        }
+        if (dbOrders && dbOrders.length > 0) {
+          this.state.orders = dbOrders;
+        }
+        if (dbConvs && dbConvs.length > 0) {
+          this.state.conversations = dbConvs.map((row: any) => ({
+            id: row.id,
+            organizationId: row.org_id || org.id,
+            channel: row.channel || 'web_chat',
+            customerId: row.customer_id,
+            unread: false,
+            priority: 'medium',
+            leadTemperature: 'warm',
+            aiConfidenceScore: 90,
+            humanHandoffRequired: false,
+            status: row.status || 'active',
+            assignedToRole: 'sales',
+            lastMessageText: row.last_message || '',
+            updatedAt: row.updated_at || new Date().toISOString(),
+          }));
+        }
+      } catch (e) {
+        console.warn('Failed to fetch org data from Supabase:', e);
+      }
+    }
+
     this.saveState();
   }
 

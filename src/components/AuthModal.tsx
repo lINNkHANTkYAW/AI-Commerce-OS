@@ -9,6 +9,8 @@ import {
   createOrganizationForUser,
 } from '../services/supabase';
 import { useAppStore } from '../services/store';
+import { Organization } from '../types';
+import { DEMO_ORGANIZATION } from '../data/seedData';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -48,6 +50,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
       if (user) {
         const orgs = await getUserOrganizations(user.id);
         setUserOrgs(orgs);
+        if (orgs.length > 0) {
+          const hasCurrent = orgs.some((o) => o.id === state.currentOrg?.id);
+          if (!hasCurrent) {
+            switchOrganization(orgs[0]);
+          }
+        }
       }
     } catch (e) {
       console.warn('checkAuth Notice:', e);
@@ -81,6 +89,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
         if (orgs.length === 0) {
           setMode('org_setup');
         } else {
+          switchOrganization(orgs[0]);
           setTimeout(() => onClose(), 800);
         }
       } else {
@@ -133,8 +142,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
 
   const handleCreateOrg = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!orgName.trim() || !currentUser) {
-      setErrorMsg('Please enter an organization name');
+    if (!orgName.trim()) {
+      setErrorMsg('Please enter an organization/store name');
       return;
     }
 
@@ -142,38 +151,38 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
     setErrorMsg('');
 
     try {
-      const newOrg = await createOrganizationForUser(currentUser.id, {
-        name: orgName.trim(),
-        country: orgCountry,
-        currency: orgCurrency,
-      });
+      let createdOrg: Organization | null = null;
+      if (currentUser) {
+        createdOrg = await createOrganizationForUser(currentUser.id, {
+          name: orgName.trim(),
+          country: orgCountry,
+          currency: orgCurrency,
+        });
+      }
 
-      if (newOrg) {
-        switchOrganization(newOrg);
-        setSuccessMsg(`Organization "${newOrg.name}" created!`);
-        const orgs = await getUserOrganizations(currentUser.id);
-        setUserOrgs(orgs);
-        setTimeout(() => {
-          onClose();
-        }, 1000);
-      } else {
-        // Fallback create local org state
-        switchOrganization({
+      if (!createdOrg) {
+        createdOrg = {
           id: `org_${Math.random().toString(36).substring(2, 8)}`,
           name: orgName.trim(),
           industry: 'Retail & Electronics',
           country: orgCountry,
           currency: orgCurrency,
           timeZone: 'Asia/Yangon',
-          description: 'AI Store',
+          description: 'Custom Store',
           toneOfVoice: 'Friendly, professional',
           createdAt: new Date().toISOString(),
-        });
-        setSuccessMsg(`Organization "${orgName}" activated!`);
-        setTimeout(() => {
-          onClose();
-        }, 800);
+        };
       }
+
+      switchOrganization(createdOrg);
+      setSuccessMsg(`Store "${createdOrg.name}" created and activated!`);
+      if (currentUser) {
+        const orgs = await getUserOrganizations(currentUser.id);
+        setUserOrgs(orgs);
+      }
+      setTimeout(() => {
+        onClose();
+      }, 800);
     } catch (err: any) {
       setErrorMsg(err.message || 'Failed to create organization');
     } finally {
@@ -187,6 +196,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
       await signOutUser();
       setCurrentUser(null);
       setUserOrgs([]);
+      switchOrganization(DEMO_ORGANIZATION);
       setSuccessMsg('Logged out.');
     } catch (e) {
       // ignore
@@ -196,7 +206,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
   };
 
   const handleDemoAccess = () => {
-    setSuccessMsg('Connected as Demo Store Owner');
+    switchOrganization(DEMO_ORGANIZATION);
+    setSuccessMsg('Connected as Demo Store Owner (NovaTech Myanmar)');
     setTimeout(() => {
       onClose();
     }, 400);

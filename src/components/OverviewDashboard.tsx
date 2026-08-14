@@ -64,6 +64,26 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
   const activeRecommendations = state.recommendations.filter((r) => !r.dismissed);
   const pendingApprovals = state.approvals.filter((a) => a.status === 'pending');
 
+  // Compute dynamic weekly revenue trend from store orders
+  const daysOfWeek = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const dynamicRevenueData = daysOfWeek.map((dayName, index) => {
+    const dayOrders = state.orders.filter((o) => {
+      if (!o.createdAt) return false;
+      const date = new Date(o.createdAt);
+      const day = date.getDay(); // 0 is Sun, 1 is Mon...
+      const dayIdx = day === 0 ? 6 : day - 1;
+      return dayIdx === index;
+    });
+    const revenueMMK = dayOrders.reduce((sum, o) => sum + (o.totalMMK || 0), 0);
+    return {
+      day: dayName,
+      revenueMMK,
+      orders: dayOrders.length,
+    };
+  });
+
+  const weeklyTotalMMK = dynamicRevenueData.reduce((sum, d) => sum + d.revenueMMK, 0);
+
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
       {/* Top Banner: Closed-loop Back-to-School Demo Action Trigger */}
@@ -75,7 +95,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
               <span>Closed-Loop AI Commerce Engine</span>
             </div>
             <h2 className="text-xl font-bold tracking-tight text-[#222222]">
-              {isMM ? 'NovaTech Myanmar - အက်ရှင်ယူပေးသော AI စနစ်' : 'NovaTech Myanmar — Action-Taking AI Commerce OS'}
+              {isMM ? `${state.currentOrg.name} - အက်ရှင်ယူပေးသော AI စနစ်` : `${state.currentOrg.name} — Action-Taking AI Commerce OS`}
             </h2>
             <p className="text-xs text-slate-600 max-w-2xl leading-relaxed">
               Campaign Planning → Content Creation → Publishing → Inquiry → AI Product Recommendation → Draft Order → CRM Update → Sales Tracking.
@@ -244,12 +264,12 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
               <h3 className="font-bold text-[#222222] text-sm">{isMM ? 'ရောင်းအား တိုးတက်မှု ဇယား' : 'Revenue & Orders Performance'}</h3>
               <p className="text-xs text-slate-500">Daily sales trend over the past week (MMK)</p>
             </div>
-            <span className="text-xs text-[#A98C63] font-bold">Weekly Total: 16,250,000 MMK</span>
+            <span className="text-xs text-[#A98C63] font-bold">Weekly Total: {weeklyTotalMMK.toLocaleString()} MMK</span>
           </div>
 
           <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={REVENUE_DATA} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+              <AreaChart data={dynamicRevenueData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <defs>
                   <linearGradient id="colorRev" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#C5A880" stopOpacity={0.4} />

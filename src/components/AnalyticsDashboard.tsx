@@ -44,13 +44,62 @@ export const AnalyticsDashboard: React.FC = () => {
 
   const isMM = state.language === 'my';
 
+  // Calculate live total revenue from active/confirmed/delivered orders
+  const totalRevenueMMK = state.orders
+    .filter((o) => o.status !== 'cancelled' && o.status !== 'refunded')
+    .reduce((acc, o) => acc + o.totalMMK, 0);
+
+  // Dynamic Channel Data based on real store orders and conversations
+  const channels = [
+    { label: 'Facebook Feed', key: 'facebook' },
+    { label: 'Telegram Bot', key: 'telegram' },
+    { label: 'Instagram Reels', key: 'instagram' },
+    { label: 'Direct Web Chat', key: 'web_chat' },
+  ];
+
+  const channelData = channels.map((ch) => {
+    const chOrders = state.orders.filter((o) => o.channel === ch.key);
+    const chConvs = state.conversations.filter((c) => c.channel === ch.key);
+    const revenue = chOrders.reduce((sum, o) => sum + (o.totalMMK || 0), 0);
+    return {
+      channel: ch.label,
+      revenueMMK: revenue,
+      inquiries: chConvs.length,
+    };
+  });
+
+  // Dynamic AI Resolution pie chart based on conversations
+  const totalConvs = state.conversations.length;
+  const autoResolvedCount = state.conversations.filter((c) => !c.humanHandoffRequired && c.status === 'resolved').length;
+  const humanApprovedCount = state.conversations.filter((c) => c.humanHandoffRequired || c.status === 'active').length;
+  const escalatedCount = state.conversations.filter((c) => c.status === 'escalated').length;
+
+  const aiPerformancePie = totalConvs > 0
+    ? [
+        { name: 'AI Auto-Resolved', value: Math.round((autoResolvedCount / totalConvs) * 100) },
+        { name: 'Human Approved', value: Math.round((humanApprovedCount / totalConvs) * 100) },
+        { name: 'Escalated to Support', value: Math.round((escalatedCount / totalConvs) * 100) },
+      ]
+    : [
+        { name: 'AI Auto-Resolved', value: 85 },
+        { name: 'Human Approved', value: 12 },
+        { name: 'Escalated to Support', value: 3 },
+      ];
+
+  // Dynamic SDG Impact estimation
+  const hoursSaved = (
+    state.conversations.length * 0.4 +
+    state.orders.length * 0.5 +
+    state.campaigns.length * 2.5
+  ).toFixed(1);
+
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-bold text-[#222222] tracking-tight">{isMM ? 'သုံးသပ်ချက်များ & SDG သက်ရောက်မှု' : 'Analytics & UN SDG Impact Report'}</h2>
-          <p className="text-xs text-slate-500">Business performance metrics, AI action efficiency, and UN SDG 8 & 9 impact statistics</p>
+          <p className="text-xs text-slate-500">Business performance metrics for {state.currentOrg.name}, AI action efficiency, and UN SDG 8 & 9 impact statistics</p>
         </div>
 
         <div className="flex items-center gap-2">
@@ -65,7 +114,7 @@ export const AnalyticsDashboard: React.FC = () => {
         <div className="flex items-center justify-between border-b border-[#EAE5DC] pb-3">
           <div className="flex items-center gap-2">
             <Award className="w-5 h-5 text-[#A98C63]" />
-            <span className="font-bold text-sm tracking-tight text-[#222222]">United Nations SDG Impact Metrics</span>
+            <span className="font-bold text-sm tracking-tight text-[#222222]">United Nations SDG Impact Metrics ({state.currentOrg.name})</span>
           </div>
           <span className="text-xs text-slate-500 font-mono">SDG 8: Decent Work & SDG 9: Industry Innovation</span>
         </div>
@@ -73,14 +122,14 @@ export const AnalyticsDashboard: React.FC = () => {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
           <div className="p-3 neu-inset rounded-xl space-y-1">
             <span className="text-[10px] text-slate-500 font-semibold uppercase">Estimated Hours Saved / Mo</span>
-            <p className="text-xl font-bold text-[#A98C63]">142.5 hrs</p>
+            <p className="text-xl font-bold text-[#A98C63]">{hoursSaved} hrs</p>
             <p className="text-[10px] text-slate-500">Automating customer responses & order drafts</p>
           </div>
 
           <div className="p-3 neu-inset rounded-xl space-y-1">
             <span className="text-[10px] text-slate-500 font-semibold uppercase">Response Time Accelerated</span>
             <p className="text-xl font-bold text-emerald-700">92% Faster</p>
-            <p className="text-[10px] text-slate-500">Reduced from 25 mins to 1.2 mins avg</p>
+            <p className="text-[10px] text-slate-500">Reduced to ~1.2 mins average response speed</p>
           </div>
 
           <div className="p-3 neu-inset rounded-xl space-y-1">
@@ -91,7 +140,7 @@ export const AnalyticsDashboard: React.FC = () => {
 
           <div className="p-3 neu-inset rounded-xl space-y-1">
             <span className="text-[10px] text-slate-500 font-semibold uppercase">Digitized MSME Revenue</span>
-            <p className="text-xl font-bold text-[#A98C63]">20,000,000+ MMK</p>
+            <p className="text-xl font-bold text-[#A98C63]">{totalRevenueMMK.toLocaleString()} MMK</p>
             <p className="text-[10px] text-slate-500">Closed through closed-loop social commerce</p>
           </div>
         </div>
@@ -108,7 +157,7 @@ export const AnalyticsDashboard: React.FC = () => {
 
           <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={CHANNEL_ROAS_DATA} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+              <BarChart data={channelData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(0,0,0,0.06)" />
                 <XAxis dataKey="channel" tickLine={false} axisLine={false} tick={{ fontSize: 10, fill: '#64748b' }} />
                 <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 10, fill: '#64748b' }} tickFormatter={(v) => `${(v/1000000).toFixed(1)}M`} />
@@ -133,7 +182,7 @@ export const AnalyticsDashboard: React.FC = () => {
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
-                  data={AI_PERFORMANCE_PIE}
+                  data={aiPerformancePie}
                   cx="50%"
                   cy="50%"
                   innerRadius={60}
@@ -141,7 +190,7 @@ export const AnalyticsDashboard: React.FC = () => {
                   paddingAngle={5}
                   dataKey="value"
                 >
-                  {AI_PERFORMANCE_PIE.map((entry, index) => (
+                  {aiPerformancePie.map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={AI_PERFORMANCE_COLORS[index % AI_PERFORMANCE_COLORS.length]} />
                   ))}
                 </Pie>
@@ -154,7 +203,7 @@ export const AnalyticsDashboard: React.FC = () => {
           </div>
 
           <div className="flex justify-center gap-4 text-xs font-medium">
-            {AI_PERFORMANCE_PIE.map((entry, idx) => (
+            {aiPerformancePie.map((entry, idx) => (
               <div key={idx} className="flex items-center gap-1.5">
                 <span className="w-3 h-3 rounded-full" style={{ backgroundColor: AI_PERFORMANCE_COLORS[idx] }}></span>
                 <span className="text-slate-600">{entry.name} ({entry.value}%)</span>
